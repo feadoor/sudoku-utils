@@ -1,6 +1,4 @@
-use std::usize;
-
-use super::Sudoku;
+use crate::{bit_iter::MaskIter, sudoku::Sudoku};
 
 const N_DIGITS: usize = 9;
 const N_BANDS: usize = 3;
@@ -11,12 +9,11 @@ const NONE: u32 = 0;
 const ALL: u32 = 0o_777_777_777;
 const LOW9: u32 = 0o_777;
 
-#[derive(Debug)]
 pub struct Unsolvable {}
 
-// Different ways of storing solutions - we can either:
-// - just count (faster)
-// - keep all the solutions (slower)
+/// Different ways of storing solutions - we can either:
+/// - just count (faster)
+/// - keep all the solutions (slower)
 enum Solutions<'a> {
     Count(usize),
     Keep(&'a mut Vec<Sudoku>),
@@ -32,8 +29,8 @@ impl<'a> Solutions<'a> {
     }
 }
 
-// A helper type for unchecked indexing into arrays, which speeds up 
-// the solver by up to 10% on the hardest puzzles.
+/// A helper type for unchecked indexing into arrays, which speeds up 
+/// the solver by up to 10% on the hardest puzzles.
 #[derive(Clone)]
 struct UncheckedIndexArray<T, const N: usize>([T; N]);
 
@@ -50,11 +47,11 @@ impl<T, const N: usize> std::ops::IndexMut<usize> for UncheckedIndexArray<T, N> 
     }
 }
 
-// Implementation is band-oriented
-// Each entry in one of these arrays is a 27-bit bitmask of possible positions within a horizontal band
-//
-// possible_cells and prev_possible_cells contain one bitmask per digit per band
-// unsolved_cells and bivalue_cells contain one bitmask per band
+/// Implementation is band-oriented
+/// Each entry in one of these arrays is a 27-bit bitmask of possible positions within a horizontal band
+///
+/// possible_cells and prev_possible_cells contain one bitmask per digit per band
+/// unsolved_cells and bivalue_cells contain one bitmask per band
 #[derive(Clone)]
 pub struct FastBruteForceSolver {
     possible_cells: UncheckedIndexArray<u32, N_SUBBANDS>,
@@ -85,7 +82,7 @@ impl FastBruteForceSolver {
             bivalue_cells: UncheckedIndexArray([NONE; N_BANDS]),
         };
         
-        for (cell, value) in sudoku.0.iter().enumerate() {
+        for (cell, value) in sudoku.digits().enumerate() {
             if *value != 0 {
                 solver.insert_value(cell, *value)?
             }
@@ -118,8 +115,8 @@ impl FastBruteForceSolver {
         self.unsolved_cells.0 == [NONE; N_BANDS]
     }
 
-    // Repeatedly use singles and locked candidates until no more deductions
-    // are possible.
+    /// Repeatedly use singles and locked candidates until no more deductions
+    /// are possible.
     fn solve(&mut self, limit: usize, solutions: &mut Solutions) -> Result<(), Unsolvable> {
 
         // Force a recursion stop if we're at the solution limit
@@ -150,7 +147,7 @@ impl FastBruteForceSolver {
         for band in 0 .. N_BANDS {
 
             // Get the first bivalue cell, if it exists
-            let cell_mask = match mask_iter(self.bivalue_cells[band]).next() {
+            let cell_mask = match MaskIter::new(self.bivalue_cells[band]).peek() {
                 Some(mask) => mask,
                 None => continue,
             };
@@ -179,17 +176,17 @@ impl FastBruteForceSolver {
         Ok(())
     }
 
-    // Find an unsolved cell and branch on it.
-    // In the vast majority of cases, there is a cell with only 2 candidates,
-    // which means that guess_bivalue() will be called instead of this function.
-    // In cases where there is no bivalue cell it is valuable to find a cell with
-    // few candidates, but an exhaustive search is too expensive.
-    // As a compromise, up to 3 cells are searched and the one with the fewest
-    // candidates is used as the branching point.
+    /// Find an unsolved cell and branch on it.
+    /// In the vast majority of cases, there is a cell with only 2 candidates,
+    /// which means that guess_bivalue() will be called instead of this function.
+    /// In cases where there is no bivalue cell it is valuable to find a cell with
+    /// few candidates, but an exhaustive search is too expensive.
+    /// As a compromise, up to 3 cells are searched and the one with the fewest
+    /// candidates is used as the branching point.
     fn guess_some_cell(&mut self, limit: usize, solutions: &mut Solutions) {
         let best_guess = (0 .. N_BANDS).flat_map(|band| {
             // Get first unsolved cell, if it exists
-            let one_unsolved_cell = mask_iter(self.unsolved_cells[band]).next()?;
+            let one_unsolved_cell = MaskIter::new(self.unsolved_cells[band]).peek()?;
             let n_candidates = (band..).step_by(3).take(N_DIGITS)
                 .filter(|&subband| self.possible_cells[subband] & one_unsolved_cell != NONE)
                 .count();
@@ -222,7 +219,7 @@ impl FastBruteForceSolver {
         }
     }
 
-    // Store the current solution
+    /// Store the current solution
     fn store_solution(&self, solutions: &mut Solutions) {
         match solutions {
             Solutions::Count(count) => *count += 1,
@@ -230,13 +227,13 @@ impl FastBruteForceSolver {
         }
     }
 
-    // Extract the solution as a Sudoku from the current solver state
+    /// Extract the solution as a Sudoku from the current solver state
     fn extract_solution(&self) -> Sudoku {
         let mut sudoku = [0; 81];
         for (subband, &mask) in self.possible_cells.0.iter().enumerate() {
             let digit = subband / 3;
             let base_cell_in_band = subband % 3 * 27;
-            for cell_mask in mask_iter(mask) {
+            for cell_mask in MaskIter::new(mask) {
                 let cell_in_band = cell_mask.trailing_zeros() as usize;
                 sudoku[cell_in_band + base_cell_in_band] = digit as u8 + 1;
             }
@@ -244,9 +241,9 @@ impl FastBruteForceSolver {
         Sudoku(sudoku)
     }
 
-    // Search for cells which only have one candidate and sets them.
-    // Also finds cells with 0 possibilities (puzzle is unsolvable), cells with
-    // 2 possibilities (good guess locations) and cells with 3 or more (bad guess locations)
+    /// Search for cells which only have one candidate and sets them.
+    /// Also finds cells with 0 possibilities (puzzle is unsolvable), cells with
+    /// 2 possibilities (good guess locations) and cells with 3 or more (bad guess locations)
     fn find_naked_singles(&mut self) -> Result<bool, Unsolvable> {
         
         let mut naked_single_applied = false;
@@ -272,7 +269,7 @@ impl FastBruteForceSolver {
             let singles = (cells1 ^ cells2) & self.unsolved_cells[band];
 
             // Insert each of the new singles
-            'insert: for cell_mask_single in mask_iter(singles) {
+            'insert: for cell_mask_single in MaskIter::new(singles) {
 
                 // Mark that we've applied a naked single
                 naked_single_applied = true;
@@ -293,12 +290,12 @@ impl FastBruteForceSolver {
         Ok(naked_single_applied)
     }
 
-    // Search for minirows that must contain a particular digit because they are the
-    // only minirow in a row or block that still contains that candidate and remove
-    // those candidates from conflicting cells.
-    //
-    // Also updates the bitmasks to remove impossible candidates left behind by
-    // calling insert_value_by_mask.
+    /// Search for minirows that must contain a particular digit because they are the
+    /// only minirow in a row or block that still contains that candidate and remove
+    /// those candidates from conflicting cells.
+    ///
+    /// Also updates the bitmasks to remove impossible candidates left behind by
+    /// calling insert_value_by_mask.
     fn find_locked_candidates_and_update(&mut self) -> Result<(), Unsolvable> {
 
         loop {
@@ -339,7 +336,7 @@ impl FastBruteForceSolver {
         }
     }
 
-    // Update locked candidates for a single subband
+    /// Update locked candidates for a single subband
     #[inline(always)]
     fn find_locked_candidates_and_update_subband(&mut self, subband: usize) -> Result<(), Unsolvable> {
         let old_possible_cells = self.possible_cells[subband];
@@ -393,18 +390,18 @@ impl FastBruteForceSolver {
     }
 
 
-    // Insert a value given a subband index and a mask representing the cell it
-    // goes in. Clears candidates from other cells in the same row and box but
-    // does not clear from other cells in the same column, as this is not cheap
-    // in our board representation and will happen later when finding locked
-    // candidates.
+    /// Insert a value given a subband index and a mask representing the cell it
+    /// goes in. Clears candidates from other cells in the same row and box but
+    /// does not clear from other cells in the same column, as this is not cheap
+    /// in our board representation and will happen later when finding locked
+    /// candidates.
     fn insert_value_by_mask(&mut self, subband: usize, mask: u32) {
         let cell = mask.trailing_zeros() as usize;
         self.possible_cells[subband] &= nonconflicting_cells_same_band(cell);
     }
 
-    // Insert starting values and clear candidates. Only used when initialising
-    // the solver from a given puzzle.
+    /// Insert starting values and clear candidates. Only used when initialising
+    /// the solver from a given puzzle.
     fn insert_value(&mut self, cell: usize, value: u8) -> Result<(), Unsolvable> {
         let band = cell / 27;
         let subband = (value as usize - 1) * 3 + band;
@@ -733,18 +730,4 @@ fn shrink_mask(cell_mask: u32) -> u32 {
         6, 7, 7, 7, 7, 7, 7, 7, 6, 7, 7, 7, 7, 7, 7, 7, 6, 7, 7, 7, 7, 7, 7, 7, 6, 7, 7, 7, 7, 7, 7, 7,
     ]);
     MASKS[cell_mask as usize]
-}
-
-// Loop over the set bits in the given mask, returning masks
-// with only that given bit set.
-fn mask_iter(mask: u32) -> impl Iterator<Item = u32> {
-    std::iter::repeat(()).scan(mask, |mask, ()| {
-        if *mask == 0 { 
-            None 
-        } else {
-            let lowest_bit = *mask & (!*mask + 1);
-            *mask ^= lowest_bit;
-            Some(lowest_bit)
-        }
-    })
 }

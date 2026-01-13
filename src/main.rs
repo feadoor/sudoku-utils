@@ -1,61 +1,42 @@
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::ops::{Index, IndexMut};
-use std::time::Instant;
-
-use fast_solver::FastBruteForceSolver;
+use indicatif::ProgressBar;
 use itertools::Itertools;
 
+use crate::filter::Filter;
+use crate::pipeline::{GenerationBase, Pipeline, PipelineStep};
+use crate::template::Template;
+
+mod bit_iter;
 mod fast_solver;
+mod filter;
+mod generator;
+mod logic;
+mod pipeline;
+mod sudoku;
 mod symmetry;
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct Sudoku([u8; 81]);
-
-fn from_str(s: &str) -> Sudoku {
-    let mut result = [0; 81];
-    for (idx, c) in s.chars().enumerate() {
-        result[idx] = c.to_digit(10).map(|v| v as u8).unwrap_or(0);
-    }
-    Sudoku(result)
-}
-
-impl Index<(usize, usize)> for Sudoku {
-    type Output = u8;
-
-    fn index(&self, (r, c): (usize, usize)) -> &u8 {
-        &self.0[9 * r + c]
-    }
-}
-
-impl IndexMut<(usize, usize)> for Sudoku {
-    fn index_mut(&mut self, (r, c): (usize, usize)) -> &mut u8 {
-        &mut self.0[9 * r + c]
-    }
-}
+mod template;
 
 fn main() {
-    let file = File::open("data/minlex-testcases").expect("Input file not present");
-    let lines = BufReader::new(file).lines().map(|l| l.expect("Error reading from file"));
-    let test_cases = lines.filter(|l| !l.is_empty()).map(|line| {
-        let (sudoku_str, expected_str) = line.split_ascii_whitespace().collect_tuple().expect("Wrong number of items on line");
-        (from_str(sudoku_str), from_str(expected_str))
-    }).collect_vec();
-    let n_test_cases = test_cases.len();
-
-    let start_time = Instant::now();
-    for (sudoku, expected) in test_cases {
-        let minlexed = symmetry::minlex(&sudoku);
-        if minlexed != expected {
-            println!(
-                "Failed: {} (got {}, expected {})", 
-                sudoku.0.iter().map(|d| if *d == 0 { '.' } else { char::from_digit(*d as u32, 10).unwrap() }).join(""), 
-                minlexed.0.iter().map(|d| if *d == 0 { '.' } else { char::from_digit(*d as u32, 10).unwrap() }).join(""), 
-                expected.0.iter().map(|d| if *d == 0 { '.' } else { char::from_digit(*d as u32, 10).unwrap() }).join(""),
-            );
-        }
-    }
-    let total_time = start_time.elapsed();
-
-    println!("Minlexed {} puzzles in {:?} ({:?} per puzzle)", n_test_cases, total_time, total_time / (n_test_cases as u32));
+    let bar = ProgressBar::new(100_000);
+    let template = Template::from_str(&"\
+        ..23..Y..\
+        .1..4..Y.\
+        ...Y....Y\
+        .76......\
+        8...Y..B.\
+        9.....Y.B\
+        .....X..A\
+        .....X.A.\
+        ...XX....\
+    ".replace("A", "[12]").replace("B", "[34]").replace("X", "[56789]").replace("Y", "[123456789]"));
+    let pipeline = Pipeline {
+        base: GenerationBase::Template(template),
+        steps: vec![
+            PipelineStep::Filter(Filter::at_most_n_basic_placements(0)),
+            PipelineStep::Filter(Filter::solves_with_basics_after_elims("56789r4c1,56789r4c6,56789r9c1,56789r9c6,4r6c4,1r7c3")),
+        ],
+    };
+    pipeline.into_iter(&bar).for_each(|sudoku| {
+        println!("{}", sudoku.digits().join(""));
+    });
+    bar.finish();
 }

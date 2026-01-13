@@ -1,5 +1,5 @@
+use crate::sudoku::Sudoku;
 use itertools::Itertools;
-use super::Sudoku;
 
 /// One of the 18 lines in a Sudoku.
 #[derive(Copy, Clone)]
