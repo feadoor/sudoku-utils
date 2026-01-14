@@ -6,6 +6,8 @@ use crate::pipeline::{GenerationBase, Pipeline, PipelineStep};
 use crate::template::Template;
 
 mod bit_iter;
+mod bitmask;
+mod dfs_with_progress;
 mod fast_solver;
 mod filter;
 mod generator;

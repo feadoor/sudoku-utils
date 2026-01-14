@@ -147,7 +147,7 @@ impl FastBruteForceSolver {
         for band in 0 .. N_BANDS {
 
             // Get the first bivalue cell, if it exists
-            let cell_mask = match MaskIter::new(self.bivalue_cells[band]).peek() {
+            let cell_mask = match MaskIter::<u32>::from(self.bivalue_cells[band]).peek() {
                 Some(mask) => mask,
                 None => continue,
             };
@@ -186,7 +186,7 @@ impl FastBruteForceSolver {
     fn guess_some_cell(&mut self, limit: usize, solutions: &mut Solutions) {
         let best_guess = (0 .. N_BANDS).flat_map(|band| {
             // Get first unsolved cell, if it exists
-            let one_unsolved_cell = MaskIter::new(self.unsolved_cells[band]).peek()?;
+            let one_unsolved_cell = MaskIter::<u32>::from(self.unsolved_cells[band]).peek()?;
             let n_candidates = (band..).step_by(3).take(N_DIGITS)
                 .filter(|&subband| self.possible_cells[subband] & one_unsolved_cell != NONE)
                 .count();
@@ -233,7 +233,7 @@ impl FastBruteForceSolver {
         for (subband, &mask) in self.possible_cells.0.iter().enumerate() {
             let digit = subband / 3;
             let base_cell_in_band = subband % 3 * 27;
-            for cell_mask in MaskIter::new(mask) {
+            for cell_mask in MaskIter::<u32>::from(mask) {
                 let cell_in_band = cell_mask.trailing_zeros() as usize;
                 sudoku[cell_in_band + base_cell_in_band] = digit as u8 + 1;
             }
@@ -269,7 +269,7 @@ impl FastBruteForceSolver {
             let singles = (cells1 ^ cells2) & self.unsolved_cells[band];
 
             // Insert each of the new singles
-            'insert: for cell_mask_single in MaskIter::new(singles) {
+            'insert: for cell_mask_single in MaskIter::<u32>::from(singles) {
 
                 // Mark that we've applied a naked single
                 naked_single_applied = true;
@@ -434,7 +434,7 @@ impl FastBruteForceSolver {
 
 #[inline]
 fn nonconflicting_cells_same_band(cell: usize) -> u32 {
-    static MASKS: UncheckedIndexArray<u32, N_CELLS> = UncheckedIndexArray([
+    const MASKS: UncheckedIndexArray<u32, N_CELLS> = UncheckedIndexArray([
         0o_770_770_001, 0o_770_770_002, 0o_770_770_004, 0o_707_707_010, 0o_707_707_020, 0o_707_707_040, 0o_077_077_100, 0o_077_077_200, 0o_077_077_400,
         0o_770_001_770, 0o_770_002_770, 0o_770_004_770, 0o_707_010_707, 0o_707_020_707, 0o_707_040_707, 0o_077_100_077, 0o_077_200_077, 0o_077_400_077,
         0o_001_770_770, 0o_002_770_770, 0o_004_770_770, 0o_010_707_707, 0o_020_707_707, 0o_040_707_707, 0o_100_077_077, 0o_200_077_077, 0o_400_077_077,
@@ -450,7 +450,7 @@ fn nonconflicting_cells_same_band(cell: usize) -> u32 {
 
 #[inline]
 fn nonconflicting_cells_neighbour_bands(cell: usize) -> u32 {
-    static MASKS: UncheckedIndexArray<u32, N_CELLS> = UncheckedIndexArray([
+    const MASKS: UncheckedIndexArray<u32, N_CELLS> = UncheckedIndexArray([
         0o_776_776_776, 0o_775_775_775, 0o_773_773_773, 0o_767_767_767, 0o_757_757_757, 0o_737_737_737, 0o_677_677_677, 0o_577_577_577, 0o_377_377_377,
         0o_776_776_776, 0o_775_775_775, 0o_773_773_773, 0o_767_767_767, 0o_757_757_757, 0o_737_737_737, 0o_677_677_677, 0o_577_577_577, 0o_377_377_377,
         0o_776_776_776, 0o_775_775_775, 0o_773_773_773, 0o_767_767_767, 0o_757_757_757, 0o_737_737_737, 0o_677_677_677, 0o_577_577_577, 0o_377_377_377,
@@ -466,7 +466,7 @@ fn nonconflicting_cells_neighbour_bands(cell: usize) -> u32 {
 
 #[inline]
 fn nonconflicting_cells_same_band_by_locked_candidates(shrink: u32) -> u32 {
-    static MASKS: UncheckedIndexArray<u32, 512> = UncheckedIndexArray([
+    const MASKS: UncheckedIndexArray<u32, 512> = UncheckedIndexArray([
         0o000000000, 0o000000000, 0o000000000, 0o000000000, 0o000000000, 0o000000000, 0o000000000, 0o000000000,
         0o000000000, 0o000000000, 0o000000000, 0o000000000, 0o000000000, 0o000000000, 0o000000000, 0o000000000,
         0o000000000, 0o000000000, 0o000000000, 0o000000000, 0o000000000, 0o000000000, 0o000000000, 0o000000000,
@@ -537,7 +537,7 @@ fn nonconflicting_cells_same_band_by_locked_candidates(shrink: u32) -> u32 {
 
 #[inline]
 fn nonconflicting_cells_neighbour_bands_by_locked_candidates(columns: u32) -> u32 {
-    static MASKS: UncheckedIndexArray<u32, 512> = UncheckedIndexArray([
+    const MASKS: UncheckedIndexArray<u32, 512> = UncheckedIndexArray([
         0o777777777, 0o776776776, 0o775775775, 0o777777777, 0o773773773, 0o777777777, 0o777777777, 0o777777777,
         0o767767767, 0o766766766, 0o765765765, 0o767767767, 0o763763763, 0o767767767, 0o767767767, 0o767767767,
         0o757757757, 0o756756756, 0o755755755, 0o757757757, 0o753753753, 0o757757757, 0o757757757, 0o757757757,
@@ -608,7 +608,7 @@ fn nonconflicting_cells_neighbour_bands_by_locked_candidates(columns: u32) -> u3
 
 #[inline]
 fn locked_minirows(shrink: u32) -> u32 {
-    static MASKS: UncheckedIndexArray<u32, 512> = UncheckedIndexArray([
+    const MASKS: UncheckedIndexArray<u32, 512> = UncheckedIndexArray([
         0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000,
         0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000,
         0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000,
@@ -647,7 +647,7 @@ fn locked_minirows(shrink: u32) -> u32 {
 
 #[inline]
 fn column_single(shrink: u32) -> u32 {
-    static MASKS: UncheckedIndexArray<u32, 512> = UncheckedIndexArray([
+    const MASKS: UncheckedIndexArray<u32, 512> = UncheckedIndexArray([
         0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000,
         0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000,
         0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000, 0o000,
@@ -686,7 +686,7 @@ fn column_single(shrink: u32) -> u32 {
 
 #[inline]
 fn neighbour_subbands(subband: usize) -> (usize, usize) {
-    static NEIGHBOURS: UncheckedIndexArray<(usize, usize), N_SUBBANDS> = UncheckedIndexArray([
+    const NEIGHBOURS: UncheckedIndexArray<(usize, usize), N_SUBBANDS> = UncheckedIndexArray([
         (1, 2), (2, 0), (0, 1),
         (4, 5), (5, 3), (3, 4),
         (7, 8), (8, 6), (6, 7),
@@ -702,7 +702,7 @@ fn neighbour_subbands(subband: usize) -> (usize, usize) {
 
 #[inline]
 fn row_mask(shrink_mask: u32) -> u32 {
-    static MASKS: UncheckedIndexArray<u32, 8> = UncheckedIndexArray([
+    const MASKS: UncheckedIndexArray<u32, 8> = UncheckedIndexArray([
         0o_000_000_000, 0o_000_000_777, 0o_000_777_000, 0o_000_777_777,
         0o_777_000_000, 0o_777_000_777, 0o_777_777_000, 0o_777_777_777,
     ]);
@@ -711,7 +711,7 @@ fn row_mask(shrink_mask: u32) -> u32 {
 
 #[inline]
 fn shrink_mask(cell_mask: u32) -> u32 {
-    static MASKS: UncheckedIndexArray<u32, 512> = UncheckedIndexArray([
+    const MASKS: UncheckedIndexArray<u32, 512> = UncheckedIndexArray([
         0, 1, 1, 1, 1, 1, 1, 1, 2, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3,
         2, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3,
         4, 5, 5, 5, 5, 5, 5, 5, 6, 7, 7, 7, 7, 7, 7, 7, 6, 7, 7, 7, 7, 7, 7, 7, 6, 7, 7, 7, 7, 7, 7, 7,

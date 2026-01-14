@@ -43,7 +43,7 @@ fn at_most_n_basic_placements(n: usize, sudoku: &Sudoku) -> bool {
 
 fn solves_with_basics_after_elims(elims: &[((usize, usize), u8)], sudoku: &Sudoku) -> bool {
     let mut sukaku = Sukaku::from_sudoku(sudoku);
-    for &((row, col), clue) in elims { sukaku[(row, col)] &= !(1 << clue) }
+    for &((row, col), clue) in elims { sukaku[(row, col)].unset(clue); }
     let mut solver = BasicSolver::for_sukaku(sukaku);
     solver.solve_basics();
     solver.is_solved()

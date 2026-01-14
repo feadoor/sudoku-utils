@@ -1,7 +1,8 @@
 use indicatif::ProgressBar;
 
+use crate::dfs_with_progress::DepthFirstSearcherWithProgress;
 use crate::filter::Filter;
-use crate::generator::Generator;
+use crate::generator::GeneratorState;
 use crate::sudoku::Sudoku;
 use crate::template::Template;
 
@@ -12,7 +13,7 @@ pub enum GenerationBase {
 impl GenerationBase {
     fn iter(&self) -> Box<dyn Iterator<Item = (f64, f64, Sudoku)>> {
         match self {
-            Self::Template(template) => Box::new(Generator::for_template(template)),
+            Self::Template(template) => Box::new(DepthFirstSearcherWithProgress::new(GeneratorState::for_template(template))),
         }
     }
 }

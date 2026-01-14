@@ -1,6 +1,6 @@
 use itertools::Itertools;
 
-use crate::bit_iter::MaskIter;
+use crate::bitmask::Bitmask;
 use crate::sudoku::{ALL_DIGITS, BOX_INDICES, BOXES, COL_INDICES, COLS, PEERS, ROW_INDICES, ROWS, Sudoku, Sukaku};
 
 /// Solver capable of performing basic logic:
@@ -11,9 +11,9 @@ pub struct BasicSolver {
     sukaku: Sukaku,
     placed: [bool; 81],
     placed_count: usize,
-    missing_from_rows: [u16; 9],
-    missing_from_cols: [u16; 9],
-    missing_from_boxes: [u16; 9],
+    missing_from_rows: [Bitmask<u16>; 9],
+    missing_from_cols: [Bitmask<u16>; 9],
+    missing_from_boxes: [Bitmask<u16>; 9],
 }
 
 impl BasicSolver {
@@ -55,7 +55,7 @@ impl BasicSolver {
 
     /// Place the given digit (represented by a bitmask with a single set bit)
     /// in the location indexed by the given index.
-    fn place(&mut self, idx: usize, mask: u16) {
+    fn place(&mut self, idx: usize, mask: Bitmask<u16>) {
         self.sukaku[idx] = mask;
         for jdx in PEERS[idx] { self.sukaku[jdx] &= !mask; }
         self.placed[idx] = true;
@@ -67,8 +67,8 @@ impl BasicSolver {
 
     /// Eliminate the given digits (represented by a bitmask) from the location
     /// indexed by the given index.
-    fn eliminate(&mut self, idx: usize, mask: u16) -> bool {
-        if self.sukaku[idx] & mask != 0 {
+    fn eliminate(&mut self, idx: usize, mask: Bitmask<u16>) -> bool {
+        if (self.sukaku[idx] & mask).is_not_empty() {
             self.sukaku[idx] &= !mask;
             true
         } else {
@@ -92,16 +92,16 @@ impl BasicSolver {
     fn do_hidden_singles(&mut self) -> bool {
         let mut made_progress = false;
         for region in ROWS.iter().chain(COLS.iter()).chain(BOXES.iter()) {
-            let (mut at_least_once, mut more_than_once) = (0, 0);
+            let (mut at_least_once, mut more_than_once) = (Bitmask::<u16>::empty(), Bitmask::<u16>::empty());
             for &idx in region.iter().filter(|&&idx| !self.placed[idx]) {
                 let mask = self.sukaku[idx];
                 more_than_once |= at_least_once & mask;
                 at_least_once |= mask;
             }
             let exactly_once = at_least_once & !more_than_once;
-            if exactly_once != 0 {
+            if exactly_once.is_not_empty() {
                 for &idx in region {
-                    if self.sukaku[idx] & exactly_once != 0 {
+                    if (self.sukaku[idx] & exactly_once).is_not_empty() {
                         self.place(idx, self.sukaku[idx] & exactly_once);
                         made_progress = true;
                     }
@@ -118,8 +118,8 @@ impl BasicSolver {
         macro_rules! do_intersections {
             ($left:expr, $left_indices:expr, $right:expr, $right_indices:expr, $missing:expr) => {
                 for (left_idx, left) in $left.iter().enumerate() {
-                    for mask in MaskIter::new($missing[left_idx]) {
-                        if let Ok(right_idx) = left.iter().filter(|&&idx| self.sukaku[idx] & mask != 0).map(|&idx| $right_indices[idx]).all_equal_value() {
+                    for mask in $missing[left_idx].into_mask_iter().map(Bitmask::<u16>::from) {
+                        if let Ok(right_idx) = left.iter().filter(|&&idx| (self.sukaku[idx] & mask).is_not_empty()).map(|&idx| $right_indices[idx]).all_equal_value() {
                             for &idx in &$right[right_idx] {
                                 if $left_indices[idx] != left_idx {
                                     made_progress |= self.eliminate(idx, mask);
@@ -160,15 +160,13 @@ impl BasicSolver {
                         let (mut indices, mut masks) = (Vec::with_capacity(sz), Vec::with_capacity(sz));
                         for jdx in 0 .. sz { 
                             indices.push(jdx); 
-                            masks.push(masks.last().unwrap_or(&0) | self.sukaku[unsolved_cells[jdx]]); 
+                            masks.push(*masks.last().unwrap_or(&Bitmask::<u16>::empty()) | self.sukaku[unsolved_cells[jdx]]); 
                         }
                         loop {
                             let mask = *masks.last().unwrap();
                             if mask.count_ones() as usize == sz {
                                 for &idx in &unsolved_cells {
-                                    if self.sukaku[idx] & !mask != 0 {
-                                        made_progress |= self.eliminate(idx, mask);
-                                    }
+                                    made_progress |= self.eliminate(idx, mask);
                                 }
                             }
                             while indices.len() > 0 && indices[indices.len() - 1] == unsolved_cells.len() - (sz + 1 - indices.len()) {

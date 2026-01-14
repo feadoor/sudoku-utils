@@ -2,13 +2,16 @@ use std::ops::{Index, IndexMut};
 
 use itertools::Itertools;
 
+use crate::bitmask::Bitmask;
+
 #[derive(Clone)]
 pub struct Sudoku(pub [u8; 81]);
 
 #[derive(Clone)]
-pub struct Sukaku(pub [u16; 81]);
+pub struct Sukaku(pub [Bitmask<u16>; 81]);
 
 impl Sudoku {
+    #[inline(always)]
     pub fn empty() -> Self {
         Self([0; 81])
     }
@@ -25,12 +28,14 @@ impl Sudoku {
 impl Index<usize> for Sudoku {
     type Output = u8;
 
+    #[inline(always)]
     fn index(&self, index: usize) -> &u8 {
         &self.0[index]
     }
 }
 
 impl IndexMut<usize> for Sudoku {
+    #[inline(always)]
     fn index_mut(&mut self, index: usize) -> &mut u8 {
         &mut self.0[index]
     }
@@ -39,58 +44,65 @@ impl IndexMut<usize> for Sudoku {
 impl Index<(usize, usize)> for Sudoku {
     type Output = u8;
 
+    #[inline(always)]
     fn index(&self, (r, c): (usize, usize)) -> &u8 {
         &self.0[9 * r + c]
     }
 }
 
 impl IndexMut<(usize, usize)> for Sudoku {
+    #[inline(always)]
     fn index_mut(&mut self, (r, c): (usize, usize)) -> &mut u8 {
         &mut self.0[9 * r + c]
     }
 }
 
 impl Sukaku {
+    #[inline(always)]
     pub fn empty() -> Self {
         Self([ALL_DIGITS; 81])
     }
 
     pub fn from_sudoku(sudoku: &Sudoku) -> Self {
-        Self(sudoku.digits().map(|&d| if d == 0 { ALL_DIGITS } else { 1 << d }).collect_array().unwrap())
+        Self(sudoku.digits().map(|&d| if d == 0 { ALL_DIGITS } else { Bitmask::<u16>::singleton(d as usize) }).collect_array().unwrap())
     }
 }
 
 impl Index<usize> for Sukaku {
-    type Output = u16;
+    type Output = Bitmask<u16>;
 
-    fn index(&self, index: usize) -> &u16 {
+    #[inline(always)]
+    fn index(&self, index: usize) -> &Bitmask<u16> {
         &self.0[index]
     }
 }
 
 impl IndexMut<usize> for Sukaku {
-    fn index_mut(&mut self, index: usize) -> &mut u16 {
+    #[inline(always)]
+    fn index_mut(&mut self, index: usize) -> &mut Bitmask<u16> {
         &mut self.0[index]
     }
 }
 
 impl Index<(usize, usize)> for Sukaku {
-    type Output = u16;
+    type Output = Bitmask<u16>;
 
-    fn index(&self, (r, c): (usize, usize)) -> &u16 {
+    #[inline(always)]
+    fn index(&self, (r, c): (usize, usize)) -> &Bitmask<u16> {
         &self.0[9 * r + c]
     }
 }
 
 impl IndexMut<(usize, usize)> for Sukaku {
-    fn index_mut(&mut self, (r, c): (usize, usize)) -> &mut u16 {
+    #[inline(always)]
+    fn index_mut(&mut self, (r, c): (usize, usize)) -> &mut Bitmask<u16> {
         &mut self.0[9 * r + c]
     }
 }
 
-pub const ALL_DIGITS: u16 = 0b_111_111_111_0;
+pub const ALL_DIGITS: Bitmask<u16> = Bitmask::<u16>::from(0b_111_111_111_0);
 
-pub static ROW_INDICES: [usize; 81] = [
+pub const ROW_INDICES: [usize; 81] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0,
     1, 1, 1, 1, 1, 1, 1, 1, 1,
     2, 2, 2, 2, 2, 2, 2, 2, 2,
@@ -102,7 +114,7 @@ pub static ROW_INDICES: [usize; 81] = [
     8, 8, 8, 8, 8, 8, 8, 8, 8,
 ];
 
-pub static COL_INDICES: [usize; 81] = [
+pub const COL_INDICES: [usize; 81] = [
     0, 1, 2, 3, 4, 5, 6, 7, 8,
     0, 1, 2, 3, 4, 5, 6, 7, 8,
     0, 1, 2, 3, 4, 5, 6, 7, 8,
@@ -114,7 +126,7 @@ pub static COL_INDICES: [usize; 81] = [
     0, 1, 2, 3, 4, 5, 6, 7, 8,
 ];
 
-pub static BOX_INDICES: [usize; 81] = [
+pub const BOX_INDICES: [usize; 81] = [
     0, 0, 0, 1, 1, 1, 2, 2, 2,
     0, 0, 0, 1, 1, 1, 2, 2, 2,
     0, 0, 0, 1, 1, 1, 2, 2, 2,
@@ -126,7 +138,7 @@ pub static BOX_INDICES: [usize; 81] = [
     6, 6, 6, 7, 7, 7, 8, 8, 8,
 ];
 
-pub static ROWS: [[usize; 9]; 9] = [
+pub const ROWS: [[usize; 9]; 9] = [
     [0, 1, 2, 3, 4, 5, 6, 7, 8],
     [9, 10, 11, 12, 13, 14, 15, 16, 17],
     [18, 19, 20, 21, 22, 23, 24, 25, 26],
@@ -138,7 +150,7 @@ pub static ROWS: [[usize; 9]; 9] = [
     [72, 73, 74, 75, 76, 77, 78, 79, 80],
 ];
 
-pub static COLS: [[usize; 9]; 9] = [
+pub const COLS: [[usize; 9]; 9] = [
     [0, 9, 18, 27, 36, 45, 54, 63, 72],
     [1, 10, 19, 28, 37, 46, 55, 64, 73],
     [2, 11, 20, 29, 38, 47, 56, 65, 74],
@@ -150,7 +162,7 @@ pub static COLS: [[usize; 9]; 9] = [
     [8, 17, 26, 35, 44, 53, 62, 71, 80],
 ];
 
-pub static BOXES: [[usize; 9]; 9] = [
+pub const BOXES: [[usize; 9]; 9] = [
     [0, 1, 2, 9, 10, 11, 18, 19, 20],
     [3, 4, 5, 12, 13, 14, 21, 22, 23],
     [6, 7, 8, 15, 16, 17, 24, 25, 26],
@@ -162,31 +174,7 @@ pub static BOXES: [[usize; 9]; 9] = [
     [60, 61, 62, 69, 70, 71, 78, 79, 80],
 ];
 
-pub static MINIROW_INDICES: [usize; 81] = [
-    0, 0, 0, 1, 1, 1, 2, 2, 2,
-    3, 3, 3, 4, 4, 4, 5, 5, 5,
-    6, 6, 6, 7, 7, 7, 8, 8, 8,
-    9, 9, 9, 10, 10, 10, 11, 11, 11,
-    12, 12, 12, 13, 13, 13, 14, 14, 14,
-    15, 15, 15, 16, 16, 16, 17, 17, 17,
-    18, 18, 18, 19, 19, 19, 20, 20, 20,
-    21, 21, 21, 22, 22, 22, 23, 23, 23,
-    24, 24, 24, 25, 25, 25, 26, 26, 26,
-];
-
-pub static MINICOL_INDICES: [usize; 81] = [
-    0, 3, 6, 9, 12, 15, 18, 21, 24,
-    0, 3, 6, 9, 12, 15, 18, 21, 24,
-    0, 3, 6, 9, 12, 15, 18, 21, 24,
-    1, 4, 7, 10, 13, 16, 19, 22, 25,
-    1, 4, 7, 10, 13, 16, 19, 22, 25,
-    1, 4, 7, 10, 13, 16, 19, 22, 25,
-    2, 5, 8, 11, 14, 17, 20, 23, 26,
-    2, 5, 8, 11, 14, 17, 20, 23, 26,
-    2, 5, 8, 11, 14, 17, 20, 23, 26,
-];
-
-pub static PEERS: [[usize; 20]; 81] = [
+pub const PEERS: [[usize; 20]; 81] = [
     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 18, 19, 20, 27, 36, 45, 54, 63, 72],
     [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 18, 19, 20, 28, 37, 46, 55, 64, 73],
     [0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 18, 19, 20, 29, 38, 47, 56, 65, 74],

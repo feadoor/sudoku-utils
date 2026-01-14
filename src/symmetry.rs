@@ -11,12 +11,115 @@ enum Line {
 /// A representation of a geometric symmetry of a Sudoku, which consists
 /// of a permutation for rows, a permutation for columns, and an indication
 /// of whether rows and columns should be transposed.
-struct Symmetry<'a> {
+pub struct Symmetry<'a> {
     row_mapping: &'a [usize; 9],
     col_mapping: &'a [usize; 9],
     transpose: bool,
 }
 
+impl<'a> Symmetry<'a> {
+    /// Given a pair of coordinates (r, c), return the coordinates (r', c') of the cell
+    /// that will be mapped to this cell under this Symmetry.
+    pub fn coordinates_preimage(&self, (r, c): (usize, usize)) -> (usize, usize) {
+        if self.transpose { (self.col_mapping[r], self.row_mapping[c]) } 
+        else { (self.row_mapping[r], self.col_mapping[c]) }
+    }
+}
+
+/// The eight symmetries forming part of the dihedral group which acts on Sudoku grids
+pub const DIHEDRAL_SYMMETRIES: &'static [Symmetry<'static>; 8] = &[
+    IDENTITY_SYMM,
+    HORIZONTAL_SYMM,
+    VERTICAL_SYMM,
+    DIAGONAL_UL_TO_DR_SYMM,
+    DIAGONAL_UR_TO_DL_SYMM,
+    ROTATE_CLOCKWISE_SYMM,
+    ROTATE_ANTICLOCKWISE_SYMM,
+    ROTATE_CENTRALLY_SYMM,
+];
+
+pub const IDENTITY_SYMM: Symmetry<'static> = Symmetry {
+    row_mapping: &[0, 1, 2, 3, 4, 5, 6, 7, 8],
+    col_mapping: &[0, 1, 2, 3, 4, 5, 6, 7, 8],
+    transpose: false,
+};
+
+pub const HORIZONTAL_SYMM: Symmetry<'static> = Symmetry {
+    row_mapping: &[0, 1, 2, 3, 4, 5, 6, 7, 8],
+    col_mapping: &[8, 7, 6, 5, 4, 3, 2, 1, 0],
+    transpose: false,
+};
+
+pub const VERTICAL_SYMM: Symmetry<'static> = Symmetry {
+    row_mapping: &[8, 7, 6, 5, 4, 3, 2, 1, 0],
+    col_mapping: &[0, 1, 2, 3, 4, 5, 6, 7, 8],
+    transpose: false,
+};
+
+pub const DIAGONAL_UL_TO_DR_SYMM: Symmetry<'static> = Symmetry {
+    row_mapping: &[0, 1, 2, 3, 4, 5, 6, 7, 8],
+    col_mapping: &[0, 1, 2, 3, 4, 5, 6, 7, 8],
+    transpose: true,
+};
+
+pub const DIAGONAL_UR_TO_DL_SYMM: Symmetry<'static> = Symmetry {
+    row_mapping: &[8, 7, 6, 5, 4, 3, 2, 1, 0],
+    col_mapping: &[8, 7, 6, 5, 4, 3, 2, 1, 0],
+    transpose: true,
+};
+
+pub const ROTATE_CLOCKWISE_SYMM: Symmetry<'static> = Symmetry {
+    row_mapping: &[0, 1, 2, 3, 4, 5, 6, 7, 8],
+    col_mapping: &[8, 7, 6, 5, 4, 3, 2, 1, 0],
+    transpose: true,
+};
+
+pub const ROTATE_ANTICLOCKWISE_SYMM: Symmetry<'static> = Symmetry {
+    row_mapping: &[8, 7, 6, 5, 4, 3, 2, 1, 0],
+    col_mapping: &[0, 1, 2, 3, 4, 5, 6, 7, 8],
+    transpose: true,
+};
+
+pub const ROTATE_CENTRALLY_SYMM: Symmetry<'static> = Symmetry {
+    row_mapping: &[8, 7, 6, 5, 4, 3, 2, 1, 0],
+    col_mapping: &[8, 7, 6, 5, 4, 3, 2, 1, 0],
+    transpose: false,
+};
+
+/// The subgroups of the dihedral symmetry group of the Sudoku grid
+#[derive(Copy, Clone)]
+pub enum DihedralSubgroup {
+    Trivial,
+    CentralSymm,
+    HorizontalSymm,
+    VeritcalSymm,
+    DiagonalUlToDrSymm,
+    DiagonalUrToDlSymm,
+    HorizontalAndVerticalSymm,
+    DualDiagonalSymm,
+    FourfoldRotationSymm,
+    FullSymm,
+}
+
+impl DihedralSubgroup {
+    pub fn symmetries(&self) -> &[Symmetry] {
+        match self {
+            Self::Trivial => &[IDENTITY_SYMM],
+            Self::CentralSymm => &[IDENTITY_SYMM, ROTATE_CENTRALLY_SYMM],
+            Self::HorizontalSymm => &[IDENTITY_SYMM, HORIZONTAL_SYMM],
+            Self::VeritcalSymm => &[IDENTITY_SYMM, VERTICAL_SYMM],
+            Self::DiagonalUlToDrSymm => &[IDENTITY_SYMM, DIAGONAL_UL_TO_DR_SYMM],
+            Self::DiagonalUrToDlSymm => &[IDENTITY_SYMM, DIAGONAL_UR_TO_DL_SYMM],
+            Self::HorizontalAndVerticalSymm => &[IDENTITY_SYMM, HORIZONTAL_SYMM, VERTICAL_SYMM, ROTATE_CENTRALLY_SYMM],
+            Self::DualDiagonalSymm => &[IDENTITY_SYMM, DIAGONAL_UL_TO_DR_SYMM, DIAGONAL_UR_TO_DL_SYMM, ROTATE_CENTRALLY_SYMM],
+            Self::FourfoldRotationSymm => &[IDENTITY_SYMM, ROTATE_CLOCKWISE_SYMM, ROTATE_ANTICLOCKWISE_SYMM, ROTATE_CENTRALLY_SYMM],
+            Self::FullSymm => DIHEDRAL_SYMMETRIES,
+        }
+    }
+}
+
+/// Apply a geometric symmetry plus relabelling which produces the
+/// minimal result, lexicographically speaking.
 pub fn minlex(sudoku: &Sudoku) -> Sudoku {
     
     // Start by determining, for each row and column, the digit count per minirow
@@ -103,6 +206,7 @@ pub fn minlex(sudoku: &Sudoku) -> Sudoku {
 /// The three digits in a given miniline.
 /// Index is either 0, 1 or 2 and describes whether this miniline is
 /// the first three, second three or last three digits in the line.
+#[inline(always)]
 fn miniline(sudoku: &Sudoku, line: Line, index: usize) -> [u8; 3] {
     match line {
         Line::Row(r) => [sudoku[(r, 3 * index)], sudoku[(r, 3 * index + 1)], sudoku[(r, 3 * index + 2)]],
@@ -122,12 +226,14 @@ fn miniline_counts(sudoku: &Sudoku) -> Vec<(Line, [usize; 3])> {
 
 /// Given the counts of the minilines in a line, produce a quaternary
 /// representation of the counts as a three-digit number.
+#[inline(always)]
 fn counts_to_quaternary_index(vals: &[usize; 3]) -> usize {
     (vals[0] << 4) | (vals[1] << 2) | vals[2]
 }
 
 /// Given the contents of a miniline, produce a binary representation
 /// of which values are nonzero.
+#[inline(always)]
 fn miniline_to_binary_index(vals: &[u8; 3]) -> usize {
     ((if vals[0] == 0 { 0 } else { 1 }) << 2) 
         | ((if vals[1] == 0 { 0 } else { 1 }) << 1) 
@@ -173,7 +279,7 @@ impl DigitMapper {
 }
 
 /// All pemutations of {0, 1, 2}, in lexicographic order
-static THREE_PERMS: [[usize; 3]; 6] = [
+const THREE_PERMS: [[usize; 3]; 6] = [
     [0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0],
 ];
 
@@ -181,7 +287,7 @@ static THREE_PERMS: [[usize; 3]; 6] = [
 /// the minilines of a row/column, the indices of permutations in `THREE_PERMS`
 /// which, when applied to the bands in this line, order the minilines in
 /// increasing order of number of digits.
-static BAND_PERMS: [&'static [usize]; 64] = [
+const BAND_PERMS: [&'static [usize]; 64] = [
     &[0, 1, 2, 3, 4, 5], &[0, 2], &[0, 2], &[0, 2],
     &[1, 4], &[0, 1], &[0], &[0],
     &[1, 4], &[1], &[0, 1], &[0],
@@ -204,14 +310,14 @@ static BAND_PERMS: [&'static [usize]; 64] = [
 /// contain digits, the indices of permutations in `THREE_PERMS` which, when
 /// applied to the cells in this minirow, move the cells with digits all the
 /// way to the right.
-static COLUMN_PERMS: [&'static [usize]; 8] = [
+const COLUMN_PERMS: [&'static [usize]; 8] = [
     &[0, 1, 2, 3, 4, 5], &[0, 2], &[1, 4], &[0, 1], &[3, 5], &[2, 3], &[4, 5], &[0, 1, 2, 3, 4, 5],
 ];
 
 /// For each possible choice of two row indices which can be the first
 /// two rows in a morphed Sudoku, the ranges of entries within `WREATH_PERMS`
 /// which have those two rows first.
-static WREATH_PERM_RANGES: [[(usize, usize); 2]; 18] = [
+const WREATH_PERM_RANGES: [[(usize, usize); 2]; 18] = [
     [(0, 36), (216, 252)], // Starting 0, 1
     [(36, 72), (252, 288)], // Starting 0, 2
     [(72, 108), (288, 324)], // Starting 1, 0
@@ -235,7 +341,7 @@ static WREATH_PERM_RANGES: [[(usize, usize); 2]; 18] = [
 /// All possible permutations of three bands, and the lines within those bands.
 /// Ordered first lexicographically by band permutation, then by permutation of
 /// band 1, then by permutations of band 2, then by permutation of band 3.
-static WREATH_PERMS: [[usize; 9]; 1296] = [
+const WREATH_PERMS: [[usize; 9]; 1296] = [
     [0, 1, 2, 3, 4, 5, 6, 7, 8], [0, 1, 2, 3, 4, 5, 6, 8, 7], [0, 1, 2, 3, 4, 5, 7, 6, 8], [0, 1, 2, 3, 4, 5, 7, 8, 6], [0, 1, 2, 3, 4, 5, 8, 6, 7], [0, 1, 2, 3, 4, 5, 8, 7, 6], 
     [0, 1, 2, 3, 5, 4, 6, 7, 8], [0, 1, 2, 3, 5, 4, 6, 8, 7], [0, 1, 2, 3, 5, 4, 7, 6, 8], [0, 1, 2, 3, 5, 4, 7, 8, 6], [0, 1, 2, 3, 5, 4, 8, 6, 7], [0, 1, 2, 3, 5, 4, 8, 7, 6], 
     [0, 1, 2, 4, 3, 5, 6, 7, 8], [0, 1, 2, 4, 3, 5, 6, 8, 7], [0, 1, 2, 4, 3, 5, 7, 6, 8], [0, 1, 2, 4, 3, 5, 7, 8, 6], [0, 1, 2, 4, 3, 5, 8, 6, 7], [0, 1, 2, 4, 3, 5, 8, 7, 6], 
