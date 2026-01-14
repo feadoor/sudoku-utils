@@ -166,7 +166,9 @@ impl BasicSolver {
                             let mask = *masks.last().unwrap();
                             if mask.count_ones() as usize == sz {
                                 for &idx in &unsolved_cells {
-                                    made_progress |= self.eliminate(idx, mask);
+                                    if (self.sukaku[idx] & !mask).is_not_empty() {
+                                        made_progress |= self.eliminate(idx, mask);
+                                    }
                                 }
                             }
                             while indices.len() > 0 && indices[indices.len() - 1] == unsolved_cells.len() - (sz + 1 - indices.len()) {

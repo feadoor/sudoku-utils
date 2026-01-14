@@ -102,7 +102,7 @@ pub enum DihedralSubgroup {
 }
 
 impl DihedralSubgroup {
-    pub fn symmetries(&self) -> &[Symmetry] {
+    pub fn symmetries(&self) -> &[Symmetry<'_>] {
         match self {
             Self::Trivial => &[IDENTITY_SYMM],
             Self::CentralSymm => &[IDENTITY_SYMM, ROTATE_CENTRALLY_SYMM],
