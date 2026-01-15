@@ -33,7 +33,7 @@ impl Filter {
 fn at_most_n_basic_placements(n: usize, sudoku: &Sudoku) -> bool {
     let clue_count = sudoku.solved_cells();
     let mut solver = BasicSolver::for_sudoku(sudoku);
-    while solver.step_basics() {
+    while let Some(true) = solver.step_basics() {
         if solver.solved_cells() > clue_count + n {
             return false;
         }

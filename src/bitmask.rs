@@ -2,7 +2,7 @@ use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, N
 
 use crate::bit_iter::{BitIter, MaskIter};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Bitmask<T>(T);
 
 macro_rules! bitmask_impl {
@@ -60,11 +60,6 @@ macro_rules! bitmask_impl {
             #[inline(always)]
             pub fn unset<S>(&mut self, bit: S) where $t: Shl<S, Output=$t> {
                 self.0 &= !(1 << bit);
-            }
-
-            #[inline(always)]
-            pub fn flip<S>(&mut self, bit: S) where $t: Shl<S, Output=$t> {
-                self.0 ^= (1 << bit);
             }
         }
 

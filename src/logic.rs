@@ -34,13 +34,15 @@ impl BasicSolver {
 
     /// Carry out all basic deductions of the simplest kind for
     /// which any deductions exist
-    pub fn step_basics(&mut self) -> bool {
-        self.do_naked_singles() || self.do_hidden_singles() || self.do_intersections() || self.do_all_subsets()
+    pub fn step_basics(&mut self) -> Option<bool> {
+        if self.do_naked_singles()? { return Some(true); }
+        if self.do_hidden_singles()? { return Some(true); }
+        Some(self.do_intersections() || self.do_all_subsets())
     }
 
     /// Carry out all basic deductions until no more remain
     pub fn solve_basics(&mut self) {
-        while self.step_basics() {}
+        while let Some(true) = self.step_basics() {}
     }
 
     /// Check if the puzzle is solved
@@ -77,38 +79,59 @@ impl BasicSolver {
     }
 
     /// Find and apply all Naked Singles
-    fn do_naked_singles(&mut self) -> bool {
+    fn do_naked_singles(&mut self) -> Option<bool> {
         let mut made_progress = false;
         for idx in 0 .. 81 {
-            if !self.placed[idx] && self.sukaku[idx].count_ones() == 1 {
-                self.place(idx, self.sukaku[idx]);
-                made_progress = true;
+            if !self.placed[idx] {
+                match self.sukaku[idx].count_ones() {
+                    0 => { return None; }
+                    1 => {
+                        self.place(idx, self.sukaku[idx]);
+                        made_progress = true;
+                    }
+                    _ => {},
+                }
             }
         }
-        made_progress
+        Some(made_progress)
     }
 
     /// Find and apply all Hidden Singles
-    fn do_hidden_singles(&mut self) -> bool {
+    fn do_hidden_singles(&mut self) -> Option<bool> {
         let mut made_progress = false;
-        for region in ROWS.iter().chain(COLS.iter()).chain(BOXES.iter()) {
-            let (mut at_least_once, mut more_than_once) = (Bitmask::<u16>::empty(), Bitmask::<u16>::empty());
-            for &idx in region.iter().filter(|&&idx| !self.placed[idx]) {
-                let mask = self.sukaku[idx];
-                more_than_once |= at_least_once & mask;
-                at_least_once |= mask;
-            }
-            let exactly_once = at_least_once & !more_than_once;
-            if exactly_once.is_not_empty() {
-                for &idx in region {
-                    if (self.sukaku[idx] & exactly_once).is_not_empty() {
-                        self.place(idx, self.sukaku[idx] & exactly_once);
-                        made_progress = true;
+
+        macro_rules! do_hidden_singles {
+            ($regions:expr, $missing:expr) => {
+                for (region_idx, region) in $regions.iter().enumerate() {
+                    let (mut at_least_once, mut more_than_once) = (Bitmask::<u16>::empty(), Bitmask::<u16>::empty());
+                    for &idx in region.iter().filter(|&&idx| !self.placed[idx]) {
+                        let mask = self.sukaku[idx];
+                        more_than_once |= at_least_once & mask;
+                        at_least_once |= mask;
+                    }
+                    if at_least_once != $missing[region_idx] { return None; }
+                    let exactly_once = at_least_once & !more_than_once;
+                    if exactly_once.is_not_empty() {
+                        for &idx in region {
+                            match (self.sukaku[idx] & exactly_once).count_ones() {
+                                0 => {},
+                                1 => {
+                                    self.place(idx, self.sukaku[idx] & exactly_once);
+                                    made_progress = true;
+                                },
+                                _ => { return None; }
+                            }
+                        }
                     }
                 }
             }
         }
-        made_progress
+
+        do_hidden_singles!(ROWS, self.missing_from_rows);
+        do_hidden_singles!(COLS, self.missing_from_cols);
+        do_hidden_singles!(BOXES, self.missing_from_boxes);
+
+        Some(made_progress)
     }
 
     /// Find and apply all Pointing and Claiming steps
