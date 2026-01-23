@@ -5,7 +5,6 @@ pub enum TemplateDigit {
     Wildcard(Vec<u8>),
 }
 
-#[derive(Debug)]
 pub struct Template([TemplateDigit; 81]);
 
 impl Template {

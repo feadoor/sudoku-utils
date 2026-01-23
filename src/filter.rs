@@ -1,9 +1,12 @@
+use crate::fast_solver::FastBruteForceSolver;
 use crate::logic::BasicSolver;
 use crate::sudoku::{Sudoku, Sukaku};
 
 pub enum Filter {
     AtMostNBasicPlacements { n: usize },
-    SolvesWithBasicsAfterElims { elims: Vec<((usize, usize), u8)> }
+    SolvesWithBasicsAfterElims { elims: Vec<((usize, usize), u8)> },
+    HasAnySolution,
+    HasUniqueSolution,
 }
 
 impl Filter {
@@ -11,6 +14,8 @@ impl Filter {
         match self {
             Self::AtMostNBasicPlacements { n } => at_most_n_basic_placements(*n, sudoku),
             Self::SolvesWithBasicsAfterElims { elims } => solves_with_basics_after_elims(elims, sudoku),
+            Self::HasAnySolution => FastBruteForceSolver::has_solution(sudoku),
+            Self::HasUniqueSolution => FastBruteForceSolver::has_unique_solution(sudoku),
         }
     }
 

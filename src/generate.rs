@@ -1,24 +1,33 @@
+use std::cell::RefCell;
 use std::iter::empty;
+use std::rc::Rc;
 
-use crate::bit_iter::BitIter;
-use crate::bitmask::Bitmask;
-use crate::dfs_with_progress::DepthFirstTraversable;
-use crate::sudoku::{ALL_DIGITS, BOX_INDICES, COL_INDICES, ROW_INDICES, Sudoku};
+use crate::bitmask::{BitIter, Bitmask};
+use crate::dfs_with_progress::{DepthFirstSearcherWithProgress, DepthFirstTraversable};
+use crate::pipeline::RegionMaskedSudoku;
 use crate::template::{Template, TemplateDigit};
+
+pub enum GenerationBase {
+    Template(Template),
+}
+
+impl GenerationBase {
+    pub fn iter(&self) -> Box<dyn Iterator<Item = (f64, f64, Rc<RefCell<RegionMaskedSudoku>>)>> {
+        match self {
+            Self::Template(template) => Box::new(DepthFirstSearcherWithProgress::new(TemplateGeneratorState::for_template(template))),
+        }
+    }
+}
 
 /// A structure capable of iterating over all partial Sudoku grids fitting
 /// a particular template.
-pub struct GeneratorState {
-    puzzle: Sudoku,
+struct TemplateGeneratorState {
+    sudoku: Rc<RefCell<RegionMaskedSudoku>>,
     wildcards: Vec<(usize, Bitmask<u16>)>,
-    used_placements: [bool; 81],
     placement_count: usize,
-    rows: [Bitmask<u16>; 9],
-    cols: [Bitmask<u16>; 9],
-    boxes: [Bitmask<u16>; 9],
 }
 
-impl GeneratorState {
+impl TemplateGeneratorState {
     pub fn for_template(template: &Template) -> Self {
         let wildcards = template.digits().enumerate().filter_map(|(idx, digit)| {
             match digit {
@@ -30,24 +39,23 @@ impl GeneratorState {
 
         Self {
             wildcards,
-            used_placements: [false; 81], placement_count: 0, 
-            puzzle: Sudoku::empty(),
-            rows: [ALL_DIGITS; 9], cols: [ALL_DIGITS; 9], boxes: [ALL_DIGITS; 9], 
+            placement_count: 0, 
+            sudoku: Rc::new(RefCell::new(RegionMaskedSudoku::empty())),
         }
     }
 
     // Decide which digit placement to branch on - use the one with the smallest branching factor
     fn best_branch_digit(&self) -> Option<(usize, BitIter<u16>)> {
         self.wildcards.iter()
-            .filter(|&&(idx, _)| !self.used_placements[idx])
-            .map(|&(idx, mask)| (idx, (mask & self.rows[ROW_INDICES[idx]] & self.cols[COL_INDICES[idx]] & self.boxes[BOX_INDICES[idx]]).into_bit_iter()))
+            .filter(|&&(idx, _)| self.sudoku.borrow().is_empty(idx))
+            .map(|&(idx, mask)| (idx, (mask & self.sudoku.borrow().candidates(idx)).as_bit_iter()))
             .min_by_key(|(_, bits)| bits.len())
     }
 }
 
-impl DepthFirstTraversable for GeneratorState {
+impl DepthFirstTraversable for TemplateGeneratorState {
     type Step = (usize, u8);
-    type Output = Sudoku;
+    type Output = Rc<RefCell<RegionMaskedSudoku>>;
 
     fn next_steps(&mut self) -> Box<dyn ExactSizeIterator<Item = Self::Step>> {
         if let Some((idx, digits)) = self.best_branch_digit() {
@@ -58,20 +66,12 @@ impl DepthFirstTraversable for GeneratorState {
     }
 
     fn apply_step(&mut self, &(idx, d): &Self::Step) {
-        self.puzzle[idx] = d;
-        self.rows[ROW_INDICES[idx]].unset(d);
-        self.cols[COL_INDICES[idx]].unset(d);
-        self.boxes[BOX_INDICES[idx]].unset(d);
-        self.used_placements[idx] = true;
+        self.sudoku.borrow_mut().place(idx, d);
         self.placement_count += 1;
     }
 
     fn revert_step(&mut self, &(idx, d): &Self::Step) {
-        self.puzzle[idx] = 0;
-        self.rows[ROW_INDICES[idx]].set(d);
-        self.cols[COL_INDICES[idx]].set(d);
-        self.boxes[BOX_INDICES[idx]].set(d);
-        self.used_placements[idx] = false;
+        self.sudoku.borrow_mut().unplace(idx, d);
         self.placement_count -=1 ;
     }
 
@@ -80,6 +80,6 @@ impl DepthFirstTraversable for GeneratorState {
     }
 
     fn output(&mut self) -> Option<Self::Output> {
-        (self.placement_count == self.wildcards.len()).then(|| self.puzzle.clone())
+        (self.placement_count == self.wildcards.len()).then(|| self.sudoku.clone())
     }
 }

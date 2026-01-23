@@ -1,4 +1,5 @@
-use crate::{bit_iter::MaskIter, sudoku::Sudoku};
+use crate::bitmask::MaskIter;
+use crate::sudoku::Sudoku;
 
 const N_DIGITS: usize = 9;
 const N_BANDS: usize = 3;

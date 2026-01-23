@@ -58,11 +58,6 @@ impl IndexMut<(usize, usize)> for Sudoku {
 }
 
 impl Sukaku {
-    #[inline(always)]
-    pub fn empty() -> Self {
-        Self([ALL_DIGITS; 81])
-    }
-
     pub fn from_sudoku(sudoku: &Sudoku) -> Self {
         Self(sudoku.digits().map(|&d| if d == 0 { ALL_DIGITS } else { Bitmask::<u16>::singleton(d as usize) }).collect_array().unwrap())
     }

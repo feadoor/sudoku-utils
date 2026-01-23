@@ -1,13 +1,6 @@
 use crate::sudoku::Sudoku;
 use itertools::Itertools;
 
-/// One of the 18 lines in a Sudoku.
-#[derive(Copy, Clone)]
-enum Line {
-    Row(usize),
-    Col(usize),
-}
-
 /// A representation of a geometric symmetry of a Sudoku, which consists
 /// of a permutation for rows, a permutation for columns, and an indication
 /// of whether rows and columns should be transposed.
@@ -18,11 +11,26 @@ pub struct Symmetry<'a> {
 }
 
 impl<'a> Symmetry<'a> {
+    /// Construct a symmetry from the given mappings
+    #[inline(always)]
+    pub fn new(row_mapping: &'a [usize; 9], col_mapping: &'a [usize; 9], transpose: bool) -> Self {
+        Self { row_mapping, col_mapping, transpose }
+    }
+
     /// Given a pair of coordinates (r, c), return the coordinates (r', c') of the cell
     /// that will be mapped to this cell under this Symmetry.
+    #[inline(always)]
     pub fn coordinates_preimage(&self, (r, c): (usize, usize)) -> (usize, usize) {
         if self.transpose { (self.col_mapping[r], self.row_mapping[c]) } 
         else { (self.row_mapping[r], self.col_mapping[c]) }
+    }
+
+    /// An iterator over the digits in the morph that is produced when
+    /// the given Symmetry is applied to the Sudoku.
+    pub fn morphed_digits(&'a self, sudoku: &'a Sudoku) -> impl Iterator<Item = u8> + 'a {
+        self.row_mapping.iter()
+            .cartesian_product(self.col_mapping.iter())
+            .map(|(&r, &c)| if self.transpose { sudoku[(c, r)] } else { sudoku[(r, c)] })
     }
 }
 
@@ -37,6 +45,85 @@ pub const DIHEDRAL_SYMMETRIES: &'static [Symmetry<'static>; 8] = &[
     ROTATE_ANTICLOCKWISE_SYMM,
     ROTATE_CENTRALLY_SYMM,
 ];
+
+/// The subgroups of the dihedral symmetry group of the Sudoku grid
+#[derive(Copy, Clone)]
+pub enum DihedralSubgroup {
+    Trivial,
+    CentralSymm,
+    HorizontalSymm,
+    VeritcalSymm,
+    DiagonalUlToDrSymm,
+    DiagonalUrToDlSymm,
+    HorizontalAndVerticalSymm,
+    DualDiagonalSymm,
+    FourfoldRotationSymm,
+    FullSymm,
+}
+
+impl DihedralSubgroup {
+    #[inline(always)]
+    pub fn symmetries(&self) -> &'static [Symmetry<'static>] {
+        match self {
+            Self::Trivial => &[IDENTITY_SYMM],
+            Self::CentralSymm => &[IDENTITY_SYMM, ROTATE_CENTRALLY_SYMM],
+            Self::HorizontalSymm => &[IDENTITY_SYMM, HORIZONTAL_SYMM],
+            Self::VeritcalSymm => &[IDENTITY_SYMM, VERTICAL_SYMM],
+            Self::DiagonalUlToDrSymm => &[IDENTITY_SYMM, DIAGONAL_UL_TO_DR_SYMM],
+            Self::DiagonalUrToDlSymm => &[IDENTITY_SYMM, DIAGONAL_UR_TO_DL_SYMM],
+            Self::HorizontalAndVerticalSymm => &[IDENTITY_SYMM, HORIZONTAL_SYMM, VERTICAL_SYMM, ROTATE_CENTRALLY_SYMM],
+            Self::DualDiagonalSymm => &[IDENTITY_SYMM, DIAGONAL_UL_TO_DR_SYMM, DIAGONAL_UR_TO_DL_SYMM, ROTATE_CENTRALLY_SYMM],
+            Self::FourfoldRotationSymm => &[IDENTITY_SYMM, ROTATE_CLOCKWISE_SYMM, ROTATE_ANTICLOCKWISE_SYMM, ROTATE_CENTRALLY_SYMM],
+            Self::FullSymm => DIHEDRAL_SYMMETRIES,
+        }
+    }
+
+    #[inline(always)]
+    pub fn orbits(&self) -> &'static [&'static [usize]] {
+        match self {
+            Self::Trivial => &TRIVIAL_ORBITS,
+            Self::CentralSymm => &CENTRAL_SYMM_ORBITS,
+            Self::HorizontalSymm => &HORIZONTAL_SYMM_ORBITS,
+            Self::VeritcalSymm => &VERTICAL_SYMM_ORBITS,
+            Self::DiagonalUlToDrSymm => &DIAGONAL_UL_TO_DR_SYMM_ORBITS,
+            Self::DiagonalUrToDlSymm => &DIAGONAL_UR_TO_DL_SYMM_ORBITS,
+            Self::HorizontalAndVerticalSymm => &HORIZONTAL_AND_VERTICAL_SYMM_ORBITS,
+            Self::DualDiagonalSymm => &DUAL_DIAGONAL_SYMM_ORBITS,
+            Self::FourfoldRotationSymm => &FOURFOLD_ROTATION_SYMM_ORBITS,
+            Self::FullSymm => &FULL_SYMM_ORBITS,
+        }
+    }
+}
+
+/// A helper struct used for relabelling the digits in a Sudoku.
+pub struct DigitMapper {
+    mapping: [u8; 10],
+    next_digit: u8,
+}
+
+impl DigitMapper {
+
+    pub fn new() -> Self {
+        Self { mapping: [0; 10], next_digit: 0 }
+    }
+
+    fn get(&mut self, source: u8) -> u8 {
+        if source == 0 { 0 } else {
+            match self.mapping.get_mut(source as usize).unwrap() {
+                x @ 0 => {
+                    self.next_digit += 1;
+                    *x = self.next_digit;
+                    *x
+                },
+                value => *value,
+            }
+        }
+    }
+
+    pub fn relabel<'a, I: Iterator<Item = u8> + 'a>(&'a mut self, digits: I) -> impl Iterator<Item = u8> + 'a {
+        digits.map(|d| self.get(d))
+    }
+}
 
 pub const IDENTITY_SYMM: Symmetry<'static> = Symmetry {
     row_mapping: &[0, 1, 2, 3, 4, 5, 6, 7, 8],
@@ -86,476 +173,122 @@ pub const ROTATE_CENTRALLY_SYMM: Symmetry<'static> = Symmetry {
     transpose: false,
 };
 
-/// The subgroups of the dihedral symmetry group of the Sudoku grid
-#[derive(Copy, Clone)]
-pub enum DihedralSubgroup {
-    Trivial,
-    CentralSymm,
-    HorizontalSymm,
-    VeritcalSymm,
-    DiagonalUlToDrSymm,
-    DiagonalUrToDlSymm,
-    HorizontalAndVerticalSymm,
-    DualDiagonalSymm,
-    FourfoldRotationSymm,
-    FullSymm,
-}
-
-impl DihedralSubgroup {
-    pub fn symmetries(&self) -> &[Symmetry<'_>] {
-        match self {
-            Self::Trivial => &[IDENTITY_SYMM],
-            Self::CentralSymm => &[IDENTITY_SYMM, ROTATE_CENTRALLY_SYMM],
-            Self::HorizontalSymm => &[IDENTITY_SYMM, HORIZONTAL_SYMM],
-            Self::VeritcalSymm => &[IDENTITY_SYMM, VERTICAL_SYMM],
-            Self::DiagonalUlToDrSymm => &[IDENTITY_SYMM, DIAGONAL_UL_TO_DR_SYMM],
-            Self::DiagonalUrToDlSymm => &[IDENTITY_SYMM, DIAGONAL_UR_TO_DL_SYMM],
-            Self::HorizontalAndVerticalSymm => &[IDENTITY_SYMM, HORIZONTAL_SYMM, VERTICAL_SYMM, ROTATE_CENTRALLY_SYMM],
-            Self::DualDiagonalSymm => &[IDENTITY_SYMM, DIAGONAL_UL_TO_DR_SYMM, DIAGONAL_UR_TO_DL_SYMM, ROTATE_CENTRALLY_SYMM],
-            Self::FourfoldRotationSymm => &[IDENTITY_SYMM, ROTATE_CLOCKWISE_SYMM, ROTATE_ANTICLOCKWISE_SYMM, ROTATE_CENTRALLY_SYMM],
-            Self::FullSymm => DIHEDRAL_SYMMETRIES,
-        }
-    }
-}
-
-/// Apply a geometric symmetry plus relabelling which produces the
-/// minimal result, lexicographically speaking.
-pub fn minlex(sudoku: &Sudoku) -> Sudoku {
-    
-    // Start by determining, for each row and column, the digit count per minirow
-    // This will let us narrow down candidates for which row/column will become
-    // row 1 in the minlexed puzzle.
-    let minilines = miniline_counts(sudoku);
-    let (mut best_rank, mut best_lines) = ([3, 3, 3], Vec::new());
-    for (line, rank) in minilines {
-        let mut sorted_rank = rank.clone(); sorted_rank.sort();
-        if sorted_rank < best_rank { best_rank = sorted_rank; best_lines = Vec::new(); }
-        if sorted_rank == best_rank { best_lines.push((line, rank)); }
-    }
-
-    // For each row/column with the smallest rank, and for each partial column permutation that
-    // achieves the minimal rank for the first row, look at the positions of all of the digits in
-    // the first three rows. We only want to keep those partial symmetries which minimise this
-    // partially-transformed puzzle, lexicographically speaking.
-    let mut best_top_three_rows: [u8; 27] = sudoku.0[0 .. 27].try_into().unwrap();
-    let mut viable_symmetries = Vec::new();
-    for (line, minirow_amounts) in best_lines {
-        let (line_index, transpose) = match line {
-            Line::Row(value) => (value, false),
-            Line::Col(value) => (value, true),
-        };
-
-        // Restrict ourselves to the band permutations which place the target line as the 
-        // first row and which move its digits as far to the right as possible.
-        let band_perms = BAND_PERMS[counts_to_quaternary_index(&minirow_amounts)].iter();
-        
-        // At this point we've fixed the permutation of bands, but need to further restrict
-        // the permutation of the columns within the bands
-        for &band_perm in band_perms {
-            let miniline1 = miniline_to_binary_index(&miniline(sudoku, line, THREE_PERMS[band_perm][0]));
-            let miniline2 = miniline_to_binary_index(&miniline(sudoku, line, THREE_PERMS[band_perm][1]));
-            let miniline3 = miniline_to_binary_index(&miniline(sudoku, line, THREE_PERMS[band_perm][2]));
-            
-            let base_col_idx = 216 * band_perm;
-            let col_indices1 = COLUMN_PERMS[miniline1].iter().map(|idx| 36 * idx);
-            let col_indices2 = COLUMN_PERMS[miniline2].iter().map(|idx| 6 * idx);
-            let col_indices3 = COLUMN_PERMS[miniline3].iter();
-
-            // We have now restricted ourselves to those symmetries, and only those symmetries,
-            // which produce an optimal row 1. For each such permutation, we calculate all the
-            // ways in which we can extend the symmetry to the top 3 rows, and keep only those
-            // which produced the minimal result.
-            for ((i1, i2), i3) in col_indices1.cartesian_product(col_indices2).cartesian_product(col_indices3) {
-                for row_mapping_group in [2 * line_index, 2 * line_index + 1] {
-                    let row_mapping = &WREATH_PERMS[WREATH_PERM_RANGES[row_mapping_group][0].0];
-                    let col_mapping = &WREATH_PERMS[base_col_idx + i1 + i2 + i3];
-                    let symmetry = Symmetry { row_mapping, col_mapping, transpose };
-                    
-                    // If this represents a new best, update our viable symmetries
-                    let mut mapper = DigitMapper::new();
-                    let comparison = mapper.relabel(morphed_digits(sudoku, &symmetry)).take(27).cmp(best_top_three_rows.iter().copied());
-                    if matches!(comparison, std::cmp::Ordering::Less) { 
-                        best_top_three_rows = mapper.relabel(morphed_digits(sudoku, &symmetry)).take(27).collect_array().unwrap(); 
-                        viable_symmetries = Vec::new(); 
-                    }
-                    if !matches!(comparison, std::cmp::Ordering::Greater) { 
-                        viable_symmetries.push((transpose, row_mapping_group, col_mapping)); 
-                    }
-                }
-            }
-        }
-    }
-
-    // Now, for each viable symmetry (one producing the minimal result for the first three rows), 
-    // find the entire morphed puzzle and keep track of the best minlex over all such symmetries
-    let mut result = sudoku.0.clone();
-    for (transpose, row_mapping_group, col_mapping) in viable_symmetries {
-        let row_mappings = &WREATH_PERM_RANGES[row_mapping_group];
-        for row_mapping in row_mappings.iter().flat_map(|&(start, end)| &WREATH_PERMS[start .. end]) {
-            let symmetry = Symmetry { row_mapping, col_mapping, transpose };
-            let mut mapper = DigitMapper::new();
-            if mapper.relabel(morphed_digits(sudoku, &symmetry)).lt(result.iter().copied()) {
-                result = mapper.relabel(morphed_digits(sudoku, &symmetry)).collect_array().unwrap();
-            }
-        }
-    }
-
-    Sudoku(result)
-}
-
-/// The three digits in a given miniline.
-/// Index is either 0, 1 or 2 and describes whether this miniline is
-/// the first three, second three or last three digits in the line.
-#[inline(always)]
-fn miniline(sudoku: &Sudoku, line: Line, index: usize) -> [u8; 3] {
-    match line {
-        Line::Row(r) => [sudoku[(r, 3 * index)], sudoku[(r, 3 * index + 1)], sudoku[(r, 3 * index + 2)]],
-        Line::Col(c) => [sudoku[(3 * index, c)], sudoku[(3 * index + 1, c)], sudoku[(3 * index + 2, c)]],
-    }
-}
-
-/// For each row/column of the Sudoku, an array of three numbers indicating
-/// how many non-zero digits appear in each of its minilines.
-fn miniline_counts(sudoku: &Sudoku) -> Vec<(Line, [usize; 3])> {
-    (0 .. 9).flat_map(|idx| [Line::Row(idx), Line::Col(idx)]).map(|line| {
-        (line, [0, 1, 2].into_iter().map(|idx| 
-            miniline(sudoku, line, idx).into_iter().filter(|&v| v != 0).count()
-        ).collect_array().unwrap())
-    }).collect()
-}
-
-/// Given the counts of the minilines in a line, produce a quaternary
-/// representation of the counts as a three-digit number.
-#[inline(always)]
-fn counts_to_quaternary_index(vals: &[usize; 3]) -> usize {
-    (vals[0] << 4) | (vals[1] << 2) | vals[2]
-}
-
-/// Given the contents of a miniline, produce a binary representation
-/// of which values are nonzero.
-#[inline(always)]
-fn miniline_to_binary_index(vals: &[u8; 3]) -> usize {
-    ((if vals[0] == 0 { 0 } else { 1 }) << 2) 
-        | ((if vals[1] == 0 { 0 } else { 1 }) << 1) 
-        | (if vals[2] == 0 { 0 } else { 1 })
-}
-
-/// An iterator over the digits in the morph that is produced when
-/// the given Symmetry is applied to the Sudoku.
-fn morphed_digits<'a>(sudoku: &'a Sudoku, symmetry: &'a Symmetry<'a>) -> impl Iterator<Item = u8> + 'a {
-    symmetry.row_mapping.iter()
-        .cartesian_product(symmetry.col_mapping.iter())
-        .map(|(&r, &c)| if symmetry.transpose { sudoku[(c, r)] } else { sudoku[(r, c)] })
-}
-
-/// A helper struct used for relabelling the digits in a Sudoku.
-struct DigitMapper {
-    mapping: [u8; 10],
-    next_digit: u8,
-}
-
-impl DigitMapper {
-
-    fn new() -> Self {
-        Self { mapping: [0; 10], next_digit: 0 }
-    }
-
-    fn get(&mut self, source: u8) -> u8 {
-        if source == 0 { 0 } else {
-            match self.mapping.get_mut(source as usize).unwrap() {
-                x @ 0 => {
-                    self.next_digit += 1;
-                    *x = self.next_digit;
-                    *x
-                },
-                value => *value,
-            }
-        }
-    }
-
-    fn relabel<'a, I: Iterator<Item = u8> + 'a>(&'a mut self, digits: I) -> impl Iterator<Item = u8> + 'a {
-        digits.map(|d| self.get(d))
-    }
-}
-
-/// All pemutations of {0, 1, 2}, in lexicographic order
-const THREE_PERMS: [[usize; 3]; 6] = [
-    [0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0],
+pub const TRIVIAL_ORBITS: [&'static [usize]; 81] = [
+    &[0], &[1], &[2], &[3], &[4], &[5], &[6], &[7], &[8],
+    &[9], &[10], &[11], &[12], &[13], &[14], &[15], &[16], &[17],
+    &[18], &[19], &[20], &[21], &[22], &[23], &[24], &[25], &[26],
+    &[27], &[28], &[29], &[30], &[31], &[32], &[33], &[34], &[35],
+    &[36], &[37], &[38], &[39], &[40], &[41], &[42], &[43], &[44],
+    &[45], &[46], &[47], &[48], &[49], &[50], &[51], &[52], &[53],
+    &[54], &[55], &[56], &[57], &[58], &[59], &[60], &[61], &[62],
+    &[63], &[64], &[65], &[66], &[67], &[68], &[69], &[70], &[71],
+    &[72], &[73], &[74], &[75], &[76], &[77], &[78], &[79], &[80],
 ];
 
-/// For each three-digit quaternary number indicating the counts of digits in
-/// the minilines of a row/column, the indices of permutations in `THREE_PERMS`
-/// which, when applied to the bands in this line, order the minilines in
-/// increasing order of number of digits.
-const BAND_PERMS: [&'static [usize]; 64] = [
-    &[0, 1, 2, 3, 4, 5], &[0, 2], &[0, 2], &[0, 2],
-    &[1, 4], &[0, 1], &[0], &[0],
-    &[1, 4], &[1], &[0, 1], &[0],
-    &[1, 4], &[1], &[1], &[0, 1],
-    &[3, 5], &[2, 3], &[2], &[2],
-    &[4, 5], &[0, 1, 2, 3, 4, 5], &[0, 2], &[0, 2],
-    &[4], &[1, 4], &[0, 1], &[0],
-    &[4], &[1, 4], &[1], &[0, 1],
-    &[3, 5], &[3], &[2, 3], &[2],
-    &[5], &[3, 5], &[2, 3], &[2],
-    &[4, 5], &[4, 5], &[0, 1, 2, 3, 4, 5], &[0, 2],
-    &[4], &[4], &[1, 4], &[0, 1],
-    &[3, 5], &[3], &[3], &[2, 3],
-    &[5], &[3, 5], &[3], &[2, 3],
-    &[5], &[5], &[3, 5], &[2, 3],
-    &[4, 5], &[4, 5], &[4, 5], &[0, 1, 2, 3, 4, 5],
+pub const CENTRAL_SYMM_ORBITS: [&'static [usize]; 81] = [
+    &[0, 80], &[1, 79], &[2, 78], &[3, 77], &[4, 76], &[5, 75], &[6, 74], &[7, 73], &[8, 72],
+    &[9, 71], &[10, 70], &[11, 69], &[12, 68], &[13, 67], &[14, 66], &[15, 65], &[16, 64], &[17, 63],
+    &[18, 62], &[19, 61], &[20, 60], &[21, 59], &[22, 58], &[23, 57], &[24, 56], &[25, 55], &[26, 54],
+    &[27, 53], &[28, 52], &[29, 51], &[30, 50], &[31, 49], &[32, 48], &[33, 47], &[34, 46], &[35, 45],
+    &[36, 44], &[37, 43], &[38, 42], &[39, 41], &[40], &[39, 41], &[38, 42], &[37, 43], &[36, 44],
+    &[35, 45], &[34, 46], &[33, 47], &[32, 48], &[31, 49], &[30, 50], &[29, 51], &[28, 52], &[27, 53],
+    &[26, 54], &[25, 55], &[24, 56], &[23, 57], &[22, 58], &[21, 59], &[20, 60], &[19, 61], &[18, 62],
+    &[17, 63], &[16, 64], &[15, 65], &[14, 66], &[13, 67], &[12, 68], &[11, 69], &[10, 70], &[9, 71],
+    &[8, 72], &[7, 73], &[6, 74], &[5, 75], &[4, 76], &[3, 77], &[2, 78], &[1, 79], &[0, 80],
 ];
 
-/// For each three-digit binary number indicating which positions in a minirow
-/// contain digits, the indices of permutations in `THREE_PERMS` which, when
-/// applied to the cells in this minirow, move the cells with digits all the
-/// way to the right.
-const COLUMN_PERMS: [&'static [usize]; 8] = [
-    &[0, 1, 2, 3, 4, 5], &[0, 2], &[1, 4], &[0, 1], &[3, 5], &[2, 3], &[4, 5], &[0, 1, 2, 3, 4, 5],
+pub const HORIZONTAL_SYMM_ORBITS: [&'static [usize]; 81] = [
+    &[0, 8], &[1, 7], &[2, 6], &[3, 5], &[4], &[3, 5], &[2, 6], &[1, 7], &[0, 8],
+    &[9, 17], &[10, 16], &[11, 15], &[12, 14], &[13], &[12, 14], &[11, 15], &[10, 16], &[9, 17],
+    &[18, 26], &[19, 25], &[20, 24], &[21, 23], &[22], &[21, 23], &[20, 24], &[19, 25], &[18, 26],
+    &[27, 35], &[28, 34], &[29, 33], &[30, 32], &[31], &[30, 32], &[29, 33], &[28, 34], &[27, 35],
+    &[36, 44], &[37, 43], &[38, 42], &[39, 41], &[40], &[39, 41], &[38, 42], &[37, 43], &[36, 44],
+    &[45, 53], &[46, 52], &[47, 51], &[48, 50], &[49], &[48, 50], &[47, 51], &[46, 52], &[45, 53],
+    &[54, 62], &[55, 61], &[56, 60], &[57, 59], &[58], &[57, 59], &[56, 60], &[55, 61], &[54, 62],
+    &[63, 71], &[64, 70], &[65, 69], &[66, 68], &[67], &[66, 68], &[65, 69], &[64, 70], &[63, 71],
+    &[72, 80], &[73, 79], &[74, 78], &[75, 77], &[76], &[75, 77], &[74, 78], &[73, 79], &[72, 80],
 ];
 
-/// For each possible choice of two row indices which can be the first
-/// two rows in a morphed Sudoku, the ranges of entries within `WREATH_PERMS`
-/// which have those two rows first.
-const WREATH_PERM_RANGES: [[(usize, usize); 2]; 18] = [
-    [(0, 36), (216, 252)], // Starting 0, 1
-    [(36, 72), (252, 288)], // Starting 0, 2
-    [(72, 108), (288, 324)], // Starting 1, 0
-    [(108, 144), (324, 360)], // Starting 1, 2
-    [(144, 180), (360, 396)], // Starting 2, 0
-    [(180, 216), (396, 432)], // Starting 2, 1
-    [(432, 468), (648, 684)], // Starting 3, 4
-    [(468, 504), (684, 720)], // Starting 3, 5
-    [(504, 540), (720, 756)], // Starting 4, 3
-    [(540, 576), (756, 792)], // Starting 4, 5
-    [(576, 612), (792, 828)], // Starting 5, 3
-    [(612, 648), (828, 864)], // Starting 5, 4
-    [(864, 900), (1080, 1116)], // Starting 6, 7
-    [(900, 936), (1116, 1152)], // Starting 6, 8
-    [(936, 972), (1152, 1188)], // Starting 7, 6
-    [(972, 1008), (1188, 1224)], // Starting 7, 8
-    [(1008, 1044), (1224, 1260)], // Starting 8, 6
-    [(1044, 1080), (1260, 1296)], // Starting 8, 7
+pub const VERTICAL_SYMM_ORBITS: [&'static [usize]; 81] = [
+    &[0, 72], &[1, 73], &[2, 74], &[3, 75], &[4, 76], &[5, 77], &[6, 78], &[7, 79], &[8, 80],
+    &[9, 63], &[10, 64], &[11, 65], &[12, 66], &[13, 67], &[14, 68], &[15, 69], &[16, 70], &[17, 71],
+    &[18, 54], &[19, 55], &[20, 56], &[21, 57], &[22, 58], &[23, 59], &[24, 60], &[25, 61], &[26, 62],
+    &[27, 45], &[28, 46], &[29, 47], &[30, 48], &[31, 49], &[32, 50], &[33, 51], &[34, 52], &[35, 53],
+    &[36], &[37], &[38], &[39], &[40], &[41], &[42], &[43], &[44],
+    &[27, 45], &[28, 46], &[29, 47], &[30, 48], &[31, 49], &[32, 50], &[33, 51], &[34, 52], &[35, 53],
+    &[18, 54], &[19, 55], &[20, 56], &[21, 57], &[22, 58], &[23, 59], &[24, 60], &[25, 61], &[26, 62],
+    &[9, 63], &[10, 64], &[11, 65], &[12, 66], &[13, 67], &[14, 68], &[15, 69], &[16, 70], &[17, 71],
+    &[0, 72], &[1, 73], &[2, 74], &[3, 75], &[4, 76], &[5, 77], &[6, 78], &[7, 79], &[8, 80],
 ];
 
-/// All possible permutations of three bands, and the lines within those bands.
-/// Ordered first lexicographically by band permutation, then by permutation of
-/// band 1, then by permutations of band 2, then by permutation of band 3.
-const WREATH_PERMS: [[usize; 9]; 1296] = [
-    [0, 1, 2, 3, 4, 5, 6, 7, 8], [0, 1, 2, 3, 4, 5, 6, 8, 7], [0, 1, 2, 3, 4, 5, 7, 6, 8], [0, 1, 2, 3, 4, 5, 7, 8, 6], [0, 1, 2, 3, 4, 5, 8, 6, 7], [0, 1, 2, 3, 4, 5, 8, 7, 6], 
-    [0, 1, 2, 3, 5, 4, 6, 7, 8], [0, 1, 2, 3, 5, 4, 6, 8, 7], [0, 1, 2, 3, 5, 4, 7, 6, 8], [0, 1, 2, 3, 5, 4, 7, 8, 6], [0, 1, 2, 3, 5, 4, 8, 6, 7], [0, 1, 2, 3, 5, 4, 8, 7, 6], 
-    [0, 1, 2, 4, 3, 5, 6, 7, 8], [0, 1, 2, 4, 3, 5, 6, 8, 7], [0, 1, 2, 4, 3, 5, 7, 6, 8], [0, 1, 2, 4, 3, 5, 7, 8, 6], [0, 1, 2, 4, 3, 5, 8, 6, 7], [0, 1, 2, 4, 3, 5, 8, 7, 6], 
-    [0, 1, 2, 4, 5, 3, 6, 7, 8], [0, 1, 2, 4, 5, 3, 6, 8, 7], [0, 1, 2, 4, 5, 3, 7, 6, 8], [0, 1, 2, 4, 5, 3, 7, 8, 6], [0, 1, 2, 4, 5, 3, 8, 6, 7], [0, 1, 2, 4, 5, 3, 8, 7, 6], 
-    [0, 1, 2, 5, 3, 4, 6, 7, 8], [0, 1, 2, 5, 3, 4, 6, 8, 7], [0, 1, 2, 5, 3, 4, 7, 6, 8], [0, 1, 2, 5, 3, 4, 7, 8, 6], [0, 1, 2, 5, 3, 4, 8, 6, 7], [0, 1, 2, 5, 3, 4, 8, 7, 6], 
-    [0, 1, 2, 5, 4, 3, 6, 7, 8], [0, 1, 2, 5, 4, 3, 6, 8, 7], [0, 1, 2, 5, 4, 3, 7, 6, 8], [0, 1, 2, 5, 4, 3, 7, 8, 6], [0, 1, 2, 5, 4, 3, 8, 6, 7], [0, 1, 2, 5, 4, 3, 8, 7, 6], 
-    [0, 2, 1, 3, 4, 5, 6, 7, 8], [0, 2, 1, 3, 4, 5, 6, 8, 7], [0, 2, 1, 3, 4, 5, 7, 6, 8], [0, 2, 1, 3, 4, 5, 7, 8, 6], [0, 2, 1, 3, 4, 5, 8, 6, 7], [0, 2, 1, 3, 4, 5, 8, 7, 6], 
-    [0, 2, 1, 3, 5, 4, 6, 7, 8], [0, 2, 1, 3, 5, 4, 6, 8, 7], [0, 2, 1, 3, 5, 4, 7, 6, 8], [0, 2, 1, 3, 5, 4, 7, 8, 6], [0, 2, 1, 3, 5, 4, 8, 6, 7], [0, 2, 1, 3, 5, 4, 8, 7, 6], 
-    [0, 2, 1, 4, 3, 5, 6, 7, 8], [0, 2, 1, 4, 3, 5, 6, 8, 7], [0, 2, 1, 4, 3, 5, 7, 6, 8], [0, 2, 1, 4, 3, 5, 7, 8, 6], [0, 2, 1, 4, 3, 5, 8, 6, 7], [0, 2, 1, 4, 3, 5, 8, 7, 6], 
-    [0, 2, 1, 4, 5, 3, 6, 7, 8], [0, 2, 1, 4, 5, 3, 6, 8, 7], [0, 2, 1, 4, 5, 3, 7, 6, 8], [0, 2, 1, 4, 5, 3, 7, 8, 6], [0, 2, 1, 4, 5, 3, 8, 6, 7], [0, 2, 1, 4, 5, 3, 8, 7, 6], 
-    [0, 2, 1, 5, 3, 4, 6, 7, 8], [0, 2, 1, 5, 3, 4, 6, 8, 7], [0, 2, 1, 5, 3, 4, 7, 6, 8], [0, 2, 1, 5, 3, 4, 7, 8, 6], [0, 2, 1, 5, 3, 4, 8, 6, 7], [0, 2, 1, 5, 3, 4, 8, 7, 6], 
-    [0, 2, 1, 5, 4, 3, 6, 7, 8], [0, 2, 1, 5, 4, 3, 6, 8, 7], [0, 2, 1, 5, 4, 3, 7, 6, 8], [0, 2, 1, 5, 4, 3, 7, 8, 6], [0, 2, 1, 5, 4, 3, 8, 6, 7], [0, 2, 1, 5, 4, 3, 8, 7, 6], 
-    [1, 0, 2, 3, 4, 5, 6, 7, 8], [1, 0, 2, 3, 4, 5, 6, 8, 7], [1, 0, 2, 3, 4, 5, 7, 6, 8], [1, 0, 2, 3, 4, 5, 7, 8, 6], [1, 0, 2, 3, 4, 5, 8, 6, 7], [1, 0, 2, 3, 4, 5, 8, 7, 6], 
-    [1, 0, 2, 3, 5, 4, 6, 7, 8], [1, 0, 2, 3, 5, 4, 6, 8, 7], [1, 0, 2, 3, 5, 4, 7, 6, 8], [1, 0, 2, 3, 5, 4, 7, 8, 6], [1, 0, 2, 3, 5, 4, 8, 6, 7], [1, 0, 2, 3, 5, 4, 8, 7, 6], 
-    [1, 0, 2, 4, 3, 5, 6, 7, 8], [1, 0, 2, 4, 3, 5, 6, 8, 7], [1, 0, 2, 4, 3, 5, 7, 6, 8], [1, 0, 2, 4, 3, 5, 7, 8, 6], [1, 0, 2, 4, 3, 5, 8, 6, 7], [1, 0, 2, 4, 3, 5, 8, 7, 6], 
-    [1, 0, 2, 4, 5, 3, 6, 7, 8], [1, 0, 2, 4, 5, 3, 6, 8, 7], [1, 0, 2, 4, 5, 3, 7, 6, 8], [1, 0, 2, 4, 5, 3, 7, 8, 6], [1, 0, 2, 4, 5, 3, 8, 6, 7], [1, 0, 2, 4, 5, 3, 8, 7, 6], 
-    [1, 0, 2, 5, 3, 4, 6, 7, 8], [1, 0, 2, 5, 3, 4, 6, 8, 7], [1, 0, 2, 5, 3, 4, 7, 6, 8], [1, 0, 2, 5, 3, 4, 7, 8, 6], [1, 0, 2, 5, 3, 4, 8, 6, 7], [1, 0, 2, 5, 3, 4, 8, 7, 6], 
-    [1, 0, 2, 5, 4, 3, 6, 7, 8], [1, 0, 2, 5, 4, 3, 6, 8, 7], [1, 0, 2, 5, 4, 3, 7, 6, 8], [1, 0, 2, 5, 4, 3, 7, 8, 6], [1, 0, 2, 5, 4, 3, 8, 6, 7], [1, 0, 2, 5, 4, 3, 8, 7, 6], 
-    [1, 2, 0, 3, 4, 5, 6, 7, 8], [1, 2, 0, 3, 4, 5, 6, 8, 7], [1, 2, 0, 3, 4, 5, 7, 6, 8], [1, 2, 0, 3, 4, 5, 7, 8, 6], [1, 2, 0, 3, 4, 5, 8, 6, 7], [1, 2, 0, 3, 4, 5, 8, 7, 6], 
-    [1, 2, 0, 3, 5, 4, 6, 7, 8], [1, 2, 0, 3, 5, 4, 6, 8, 7], [1, 2, 0, 3, 5, 4, 7, 6, 8], [1, 2, 0, 3, 5, 4, 7, 8, 6], [1, 2, 0, 3, 5, 4, 8, 6, 7], [1, 2, 0, 3, 5, 4, 8, 7, 6], 
-    [1, 2, 0, 4, 3, 5, 6, 7, 8], [1, 2, 0, 4, 3, 5, 6, 8, 7], [1, 2, 0, 4, 3, 5, 7, 6, 8], [1, 2, 0, 4, 3, 5, 7, 8, 6], [1, 2, 0, 4, 3, 5, 8, 6, 7], [1, 2, 0, 4, 3, 5, 8, 7, 6], 
-    [1, 2, 0, 4, 5, 3, 6, 7, 8], [1, 2, 0, 4, 5, 3, 6, 8, 7], [1, 2, 0, 4, 5, 3, 7, 6, 8], [1, 2, 0, 4, 5, 3, 7, 8, 6], [1, 2, 0, 4, 5, 3, 8, 6, 7], [1, 2, 0, 4, 5, 3, 8, 7, 6], 
-    [1, 2, 0, 5, 3, 4, 6, 7, 8], [1, 2, 0, 5, 3, 4, 6, 8, 7], [1, 2, 0, 5, 3, 4, 7, 6, 8], [1, 2, 0, 5, 3, 4, 7, 8, 6], [1, 2, 0, 5, 3, 4, 8, 6, 7], [1, 2, 0, 5, 3, 4, 8, 7, 6], 
-    [1, 2, 0, 5, 4, 3, 6, 7, 8], [1, 2, 0, 5, 4, 3, 6, 8, 7], [1, 2, 0, 5, 4, 3, 7, 6, 8], [1, 2, 0, 5, 4, 3, 7, 8, 6], [1, 2, 0, 5, 4, 3, 8, 6, 7], [1, 2, 0, 5, 4, 3, 8, 7, 6], 
-    [2, 0, 1, 3, 4, 5, 6, 7, 8], [2, 0, 1, 3, 4, 5, 6, 8, 7], [2, 0, 1, 3, 4, 5, 7, 6, 8], [2, 0, 1, 3, 4, 5, 7, 8, 6], [2, 0, 1, 3, 4, 5, 8, 6, 7], [2, 0, 1, 3, 4, 5, 8, 7, 6], 
-    [2, 0, 1, 3, 5, 4, 6, 7, 8], [2, 0, 1, 3, 5, 4, 6, 8, 7], [2, 0, 1, 3, 5, 4, 7, 6, 8], [2, 0, 1, 3, 5, 4, 7, 8, 6], [2, 0, 1, 3, 5, 4, 8, 6, 7], [2, 0, 1, 3, 5, 4, 8, 7, 6], 
-    [2, 0, 1, 4, 3, 5, 6, 7, 8], [2, 0, 1, 4, 3, 5, 6, 8, 7], [2, 0, 1, 4, 3, 5, 7, 6, 8], [2, 0, 1, 4, 3, 5, 7, 8, 6], [2, 0, 1, 4, 3, 5, 8, 6, 7], [2, 0, 1, 4, 3, 5, 8, 7, 6], 
-    [2, 0, 1, 4, 5, 3, 6, 7, 8], [2, 0, 1, 4, 5, 3, 6, 8, 7], [2, 0, 1, 4, 5, 3, 7, 6, 8], [2, 0, 1, 4, 5, 3, 7, 8, 6], [2, 0, 1, 4, 5, 3, 8, 6, 7], [2, 0, 1, 4, 5, 3, 8, 7, 6], 
-    [2, 0, 1, 5, 3, 4, 6, 7, 8], [2, 0, 1, 5, 3, 4, 6, 8, 7], [2, 0, 1, 5, 3, 4, 7, 6, 8], [2, 0, 1, 5, 3, 4, 7, 8, 6], [2, 0, 1, 5, 3, 4, 8, 6, 7], [2, 0, 1, 5, 3, 4, 8, 7, 6], 
-    [2, 0, 1, 5, 4, 3, 6, 7, 8], [2, 0, 1, 5, 4, 3, 6, 8, 7], [2, 0, 1, 5, 4, 3, 7, 6, 8], [2, 0, 1, 5, 4, 3, 7, 8, 6], [2, 0, 1, 5, 4, 3, 8, 6, 7], [2, 0, 1, 5, 4, 3, 8, 7, 6], 
-    [2, 1, 0, 3, 4, 5, 6, 7, 8], [2, 1, 0, 3, 4, 5, 6, 8, 7], [2, 1, 0, 3, 4, 5, 7, 6, 8], [2, 1, 0, 3, 4, 5, 7, 8, 6], [2, 1, 0, 3, 4, 5, 8, 6, 7], [2, 1, 0, 3, 4, 5, 8, 7, 6], 
-    [2, 1, 0, 3, 5, 4, 6, 7, 8], [2, 1, 0, 3, 5, 4, 6, 8, 7], [2, 1, 0, 3, 5, 4, 7, 6, 8], [2, 1, 0, 3, 5, 4, 7, 8, 6], [2, 1, 0, 3, 5, 4, 8, 6, 7], [2, 1, 0, 3, 5, 4, 8, 7, 6], 
-    [2, 1, 0, 4, 3, 5, 6, 7, 8], [2, 1, 0, 4, 3, 5, 6, 8, 7], [2, 1, 0, 4, 3, 5, 7, 6, 8], [2, 1, 0, 4, 3, 5, 7, 8, 6], [2, 1, 0, 4, 3, 5, 8, 6, 7], [2, 1, 0, 4, 3, 5, 8, 7, 6], 
-    [2, 1, 0, 4, 5, 3, 6, 7, 8], [2, 1, 0, 4, 5, 3, 6, 8, 7], [2, 1, 0, 4, 5, 3, 7, 6, 8], [2, 1, 0, 4, 5, 3, 7, 8, 6], [2, 1, 0, 4, 5, 3, 8, 6, 7], [2, 1, 0, 4, 5, 3, 8, 7, 6], 
-    [2, 1, 0, 5, 3, 4, 6, 7, 8], [2, 1, 0, 5, 3, 4, 6, 8, 7], [2, 1, 0, 5, 3, 4, 7, 6, 8], [2, 1, 0, 5, 3, 4, 7, 8, 6], [2, 1, 0, 5, 3, 4, 8, 6, 7], [2, 1, 0, 5, 3, 4, 8, 7, 6], 
-    [2, 1, 0, 5, 4, 3, 6, 7, 8], [2, 1, 0, 5, 4, 3, 6, 8, 7], [2, 1, 0, 5, 4, 3, 7, 6, 8], [2, 1, 0, 5, 4, 3, 7, 8, 6], [2, 1, 0, 5, 4, 3, 8, 6, 7], [2, 1, 0, 5, 4, 3, 8, 7, 6], 
-    [0, 1, 2, 6, 7, 8, 3, 4, 5], [0, 1, 2, 6, 7, 8, 3, 5, 4], [0, 1, 2, 6, 7, 8, 4, 3, 5], [0, 1, 2, 6, 7, 8, 4, 5, 3], [0, 1, 2, 6, 7, 8, 5, 3, 4], [0, 1, 2, 6, 7, 8, 5, 4, 3], 
-    [0, 1, 2, 6, 8, 7, 3, 4, 5], [0, 1, 2, 6, 8, 7, 3, 5, 4], [0, 1, 2, 6, 8, 7, 4, 3, 5], [0, 1, 2, 6, 8, 7, 4, 5, 3], [0, 1, 2, 6, 8, 7, 5, 3, 4], [0, 1, 2, 6, 8, 7, 5, 4, 3], 
-    [0, 1, 2, 7, 6, 8, 3, 4, 5], [0, 1, 2, 7, 6, 8, 3, 5, 4], [0, 1, 2, 7, 6, 8, 4, 3, 5], [0, 1, 2, 7, 6, 8, 4, 5, 3], [0, 1, 2, 7, 6, 8, 5, 3, 4], [0, 1, 2, 7, 6, 8, 5, 4, 3], 
-    [0, 1, 2, 7, 8, 6, 3, 4, 5], [0, 1, 2, 7, 8, 6, 3, 5, 4], [0, 1, 2, 7, 8, 6, 4, 3, 5], [0, 1, 2, 7, 8, 6, 4, 5, 3], [0, 1, 2, 7, 8, 6, 5, 3, 4], [0, 1, 2, 7, 8, 6, 5, 4, 3], 
-    [0, 1, 2, 8, 6, 7, 3, 4, 5], [0, 1, 2, 8, 6, 7, 3, 5, 4], [0, 1, 2, 8, 6, 7, 4, 3, 5], [0, 1, 2, 8, 6, 7, 4, 5, 3], [0, 1, 2, 8, 6, 7, 5, 3, 4], [0, 1, 2, 8, 6, 7, 5, 4, 3], 
-    [0, 1, 2, 8, 7, 6, 3, 4, 5], [0, 1, 2, 8, 7, 6, 3, 5, 4], [0, 1, 2, 8, 7, 6, 4, 3, 5], [0, 1, 2, 8, 7, 6, 4, 5, 3], [0, 1, 2, 8, 7, 6, 5, 3, 4], [0, 1, 2, 8, 7, 6, 5, 4, 3], 
-    [0, 2, 1, 6, 7, 8, 3, 4, 5], [0, 2, 1, 6, 7, 8, 3, 5, 4], [0, 2, 1, 6, 7, 8, 4, 3, 5], [0, 2, 1, 6, 7, 8, 4, 5, 3], [0, 2, 1, 6, 7, 8, 5, 3, 4], [0, 2, 1, 6, 7, 8, 5, 4, 3], 
-    [0, 2, 1, 6, 8, 7, 3, 4, 5], [0, 2, 1, 6, 8, 7, 3, 5, 4], [0, 2, 1, 6, 8, 7, 4, 3, 5], [0, 2, 1, 6, 8, 7, 4, 5, 3], [0, 2, 1, 6, 8, 7, 5, 3, 4], [0, 2, 1, 6, 8, 7, 5, 4, 3], 
-    [0, 2, 1, 7, 6, 8, 3, 4, 5], [0, 2, 1, 7, 6, 8, 3, 5, 4], [0, 2, 1, 7, 6, 8, 4, 3, 5], [0, 2, 1, 7, 6, 8, 4, 5, 3], [0, 2, 1, 7, 6, 8, 5, 3, 4], [0, 2, 1, 7, 6, 8, 5, 4, 3], 
-    [0, 2, 1, 7, 8, 6, 3, 4, 5], [0, 2, 1, 7, 8, 6, 3, 5, 4], [0, 2, 1, 7, 8, 6, 4, 3, 5], [0, 2, 1, 7, 8, 6, 4, 5, 3], [0, 2, 1, 7, 8, 6, 5, 3, 4], [0, 2, 1, 7, 8, 6, 5, 4, 3], 
-    [0, 2, 1, 8, 6, 7, 3, 4, 5], [0, 2, 1, 8, 6, 7, 3, 5, 4], [0, 2, 1, 8, 6, 7, 4, 3, 5], [0, 2, 1, 8, 6, 7, 4, 5, 3], [0, 2, 1, 8, 6, 7, 5, 3, 4], [0, 2, 1, 8, 6, 7, 5, 4, 3], 
-    [0, 2, 1, 8, 7, 6, 3, 4, 5], [0, 2, 1, 8, 7, 6, 3, 5, 4], [0, 2, 1, 8, 7, 6, 4, 3, 5], [0, 2, 1, 8, 7, 6, 4, 5, 3], [0, 2, 1, 8, 7, 6, 5, 3, 4], [0, 2, 1, 8, 7, 6, 5, 4, 3], 
-    [1, 0, 2, 6, 7, 8, 3, 4, 5], [1, 0, 2, 6, 7, 8, 3, 5, 4], [1, 0, 2, 6, 7, 8, 4, 3, 5], [1, 0, 2, 6, 7, 8, 4, 5, 3], [1, 0, 2, 6, 7, 8, 5, 3, 4], [1, 0, 2, 6, 7, 8, 5, 4, 3], 
-    [1, 0, 2, 6, 8, 7, 3, 4, 5], [1, 0, 2, 6, 8, 7, 3, 5, 4], [1, 0, 2, 6, 8, 7, 4, 3, 5], [1, 0, 2, 6, 8, 7, 4, 5, 3], [1, 0, 2, 6, 8, 7, 5, 3, 4], [1, 0, 2, 6, 8, 7, 5, 4, 3], 
-    [1, 0, 2, 7, 6, 8, 3, 4, 5], [1, 0, 2, 7, 6, 8, 3, 5, 4], [1, 0, 2, 7, 6, 8, 4, 3, 5], [1, 0, 2, 7, 6, 8, 4, 5, 3], [1, 0, 2, 7, 6, 8, 5, 3, 4], [1, 0, 2, 7, 6, 8, 5, 4, 3], 
-    [1, 0, 2, 7, 8, 6, 3, 4, 5], [1, 0, 2, 7, 8, 6, 3, 5, 4], [1, 0, 2, 7, 8, 6, 4, 3, 5], [1, 0, 2, 7, 8, 6, 4, 5, 3], [1, 0, 2, 7, 8, 6, 5, 3, 4], [1, 0, 2, 7, 8, 6, 5, 4, 3], 
-    [1, 0, 2, 8, 6, 7, 3, 4, 5], [1, 0, 2, 8, 6, 7, 3, 5, 4], [1, 0, 2, 8, 6, 7, 4, 3, 5], [1, 0, 2, 8, 6, 7, 4, 5, 3], [1, 0, 2, 8, 6, 7, 5, 3, 4], [1, 0, 2, 8, 6, 7, 5, 4, 3], 
-    [1, 0, 2, 8, 7, 6, 3, 4, 5], [1, 0, 2, 8, 7, 6, 3, 5, 4], [1, 0, 2, 8, 7, 6, 4, 3, 5], [1, 0, 2, 8, 7, 6, 4, 5, 3], [1, 0, 2, 8, 7, 6, 5, 3, 4], [1, 0, 2, 8, 7, 6, 5, 4, 3], 
-    [1, 2, 0, 6, 7, 8, 3, 4, 5], [1, 2, 0, 6, 7, 8, 3, 5, 4], [1, 2, 0, 6, 7, 8, 4, 3, 5], [1, 2, 0, 6, 7, 8, 4, 5, 3], [1, 2, 0, 6, 7, 8, 5, 3, 4], [1, 2, 0, 6, 7, 8, 5, 4, 3], 
-    [1, 2, 0, 6, 8, 7, 3, 4, 5], [1, 2, 0, 6, 8, 7, 3, 5, 4], [1, 2, 0, 6, 8, 7, 4, 3, 5], [1, 2, 0, 6, 8, 7, 4, 5, 3], [1, 2, 0, 6, 8, 7, 5, 3, 4], [1, 2, 0, 6, 8, 7, 5, 4, 3], 
-    [1, 2, 0, 7, 6, 8, 3, 4, 5], [1, 2, 0, 7, 6, 8, 3, 5, 4], [1, 2, 0, 7, 6, 8, 4, 3, 5], [1, 2, 0, 7, 6, 8, 4, 5, 3], [1, 2, 0, 7, 6, 8, 5, 3, 4], [1, 2, 0, 7, 6, 8, 5, 4, 3], 
-    [1, 2, 0, 7, 8, 6, 3, 4, 5], [1, 2, 0, 7, 8, 6, 3, 5, 4], [1, 2, 0, 7, 8, 6, 4, 3, 5], [1, 2, 0, 7, 8, 6, 4, 5, 3], [1, 2, 0, 7, 8, 6, 5, 3, 4], [1, 2, 0, 7, 8, 6, 5, 4, 3], 
-    [1, 2, 0, 8, 6, 7, 3, 4, 5], [1, 2, 0, 8, 6, 7, 3, 5, 4], [1, 2, 0, 8, 6, 7, 4, 3, 5], [1, 2, 0, 8, 6, 7, 4, 5, 3], [1, 2, 0, 8, 6, 7, 5, 3, 4], [1, 2, 0, 8, 6, 7, 5, 4, 3], 
-    [1, 2, 0, 8, 7, 6, 3, 4, 5], [1, 2, 0, 8, 7, 6, 3, 5, 4], [1, 2, 0, 8, 7, 6, 4, 3, 5], [1, 2, 0, 8, 7, 6, 4, 5, 3], [1, 2, 0, 8, 7, 6, 5, 3, 4], [1, 2, 0, 8, 7, 6, 5, 4, 3], 
-    [2, 0, 1, 6, 7, 8, 3, 4, 5], [2, 0, 1, 6, 7, 8, 3, 5, 4], [2, 0, 1, 6, 7, 8, 4, 3, 5], [2, 0, 1, 6, 7, 8, 4, 5, 3], [2, 0, 1, 6, 7, 8, 5, 3, 4], [2, 0, 1, 6, 7, 8, 5, 4, 3], 
-    [2, 0, 1, 6, 8, 7, 3, 4, 5], [2, 0, 1, 6, 8, 7, 3, 5, 4], [2, 0, 1, 6, 8, 7, 4, 3, 5], [2, 0, 1, 6, 8, 7, 4, 5, 3], [2, 0, 1, 6, 8, 7, 5, 3, 4], [2, 0, 1, 6, 8, 7, 5, 4, 3], 
-    [2, 0, 1, 7, 6, 8, 3, 4, 5], [2, 0, 1, 7, 6, 8, 3, 5, 4], [2, 0, 1, 7, 6, 8, 4, 3, 5], [2, 0, 1, 7, 6, 8, 4, 5, 3], [2, 0, 1, 7, 6, 8, 5, 3, 4], [2, 0, 1, 7, 6, 8, 5, 4, 3], 
-    [2, 0, 1, 7, 8, 6, 3, 4, 5], [2, 0, 1, 7, 8, 6, 3, 5, 4], [2, 0, 1, 7, 8, 6, 4, 3, 5], [2, 0, 1, 7, 8, 6, 4, 5, 3], [2, 0, 1, 7, 8, 6, 5, 3, 4], [2, 0, 1, 7, 8, 6, 5, 4, 3], 
-    [2, 0, 1, 8, 6, 7, 3, 4, 5], [2, 0, 1, 8, 6, 7, 3, 5, 4], [2, 0, 1, 8, 6, 7, 4, 3, 5], [2, 0, 1, 8, 6, 7, 4, 5, 3], [2, 0, 1, 8, 6, 7, 5, 3, 4], [2, 0, 1, 8, 6, 7, 5, 4, 3], 
-    [2, 0, 1, 8, 7, 6, 3, 4, 5], [2, 0, 1, 8, 7, 6, 3, 5, 4], [2, 0, 1, 8, 7, 6, 4, 3, 5], [2, 0, 1, 8, 7, 6, 4, 5, 3], [2, 0, 1, 8, 7, 6, 5, 3, 4], [2, 0, 1, 8, 7, 6, 5, 4, 3], 
-    [2, 1, 0, 6, 7, 8, 3, 4, 5], [2, 1, 0, 6, 7, 8, 3, 5, 4], [2, 1, 0, 6, 7, 8, 4, 3, 5], [2, 1, 0, 6, 7, 8, 4, 5, 3], [2, 1, 0, 6, 7, 8, 5, 3, 4], [2, 1, 0, 6, 7, 8, 5, 4, 3], 
-    [2, 1, 0, 6, 8, 7, 3, 4, 5], [2, 1, 0, 6, 8, 7, 3, 5, 4], [2, 1, 0, 6, 8, 7, 4, 3, 5], [2, 1, 0, 6, 8, 7, 4, 5, 3], [2, 1, 0, 6, 8, 7, 5, 3, 4], [2, 1, 0, 6, 8, 7, 5, 4, 3], 
-    [2, 1, 0, 7, 6, 8, 3, 4, 5], [2, 1, 0, 7, 6, 8, 3, 5, 4], [2, 1, 0, 7, 6, 8, 4, 3, 5], [2, 1, 0, 7, 6, 8, 4, 5, 3], [2, 1, 0, 7, 6, 8, 5, 3, 4], [2, 1, 0, 7, 6, 8, 5, 4, 3], 
-    [2, 1, 0, 7, 8, 6, 3, 4, 5], [2, 1, 0, 7, 8, 6, 3, 5, 4], [2, 1, 0, 7, 8, 6, 4, 3, 5], [2, 1, 0, 7, 8, 6, 4, 5, 3], [2, 1, 0, 7, 8, 6, 5, 3, 4], [2, 1, 0, 7, 8, 6, 5, 4, 3], 
-    [2, 1, 0, 8, 6, 7, 3, 4, 5], [2, 1, 0, 8, 6, 7, 3, 5, 4], [2, 1, 0, 8, 6, 7, 4, 3, 5], [2, 1, 0, 8, 6, 7, 4, 5, 3], [2, 1, 0, 8, 6, 7, 5, 3, 4], [2, 1, 0, 8, 6, 7, 5, 4, 3], 
-    [2, 1, 0, 8, 7, 6, 3, 4, 5], [2, 1, 0, 8, 7, 6, 3, 5, 4], [2, 1, 0, 8, 7, 6, 4, 3, 5], [2, 1, 0, 8, 7, 6, 4, 5, 3], [2, 1, 0, 8, 7, 6, 5, 3, 4], [2, 1, 0, 8, 7, 6, 5, 4, 3], 
-    [3, 4, 5, 0, 1, 2, 6, 7, 8], [3, 4, 5, 0, 1, 2, 6, 8, 7], [3, 4, 5, 0, 1, 2, 7, 6, 8], [3, 4, 5, 0, 1, 2, 7, 8, 6], [3, 4, 5, 0, 1, 2, 8, 6, 7], [3, 4, 5, 0, 1, 2, 8, 7, 6], 
-    [3, 4, 5, 0, 2, 1, 6, 7, 8], [3, 4, 5, 0, 2, 1, 6, 8, 7], [3, 4, 5, 0, 2, 1, 7, 6, 8], [3, 4, 5, 0, 2, 1, 7, 8, 6], [3, 4, 5, 0, 2, 1, 8, 6, 7], [3, 4, 5, 0, 2, 1, 8, 7, 6], 
-    [3, 4, 5, 1, 0, 2, 6, 7, 8], [3, 4, 5, 1, 0, 2, 6, 8, 7], [3, 4, 5, 1, 0, 2, 7, 6, 8], [3, 4, 5, 1, 0, 2, 7, 8, 6], [3, 4, 5, 1, 0, 2, 8, 6, 7], [3, 4, 5, 1, 0, 2, 8, 7, 6], 
-    [3, 4, 5, 1, 2, 0, 6, 7, 8], [3, 4, 5, 1, 2, 0, 6, 8, 7], [3, 4, 5, 1, 2, 0, 7, 6, 8], [3, 4, 5, 1, 2, 0, 7, 8, 6], [3, 4, 5, 1, 2, 0, 8, 6, 7], [3, 4, 5, 1, 2, 0, 8, 7, 6], 
-    [3, 4, 5, 2, 0, 1, 6, 7, 8], [3, 4, 5, 2, 0, 1, 6, 8, 7], [3, 4, 5, 2, 0, 1, 7, 6, 8], [3, 4, 5, 2, 0, 1, 7, 8, 6], [3, 4, 5, 2, 0, 1, 8, 6, 7], [3, 4, 5, 2, 0, 1, 8, 7, 6], 
-    [3, 4, 5, 2, 1, 0, 6, 7, 8], [3, 4, 5, 2, 1, 0, 6, 8, 7], [3, 4, 5, 2, 1, 0, 7, 6, 8], [3, 4, 5, 2, 1, 0, 7, 8, 6], [3, 4, 5, 2, 1, 0, 8, 6, 7], [3, 4, 5, 2, 1, 0, 8, 7, 6], 
-    [3, 5, 4, 0, 1, 2, 6, 7, 8], [3, 5, 4, 0, 1, 2, 6, 8, 7], [3, 5, 4, 0, 1, 2, 7, 6, 8], [3, 5, 4, 0, 1, 2, 7, 8, 6], [3, 5, 4, 0, 1, 2, 8, 6, 7], [3, 5, 4, 0, 1, 2, 8, 7, 6], 
-    [3, 5, 4, 0, 2, 1, 6, 7, 8], [3, 5, 4, 0, 2, 1, 6, 8, 7], [3, 5, 4, 0, 2, 1, 7, 6, 8], [3, 5, 4, 0, 2, 1, 7, 8, 6], [3, 5, 4, 0, 2, 1, 8, 6, 7], [3, 5, 4, 0, 2, 1, 8, 7, 6], 
-    [3, 5, 4, 1, 0, 2, 6, 7, 8], [3, 5, 4, 1, 0, 2, 6, 8, 7], [3, 5, 4, 1, 0, 2, 7, 6, 8], [3, 5, 4, 1, 0, 2, 7, 8, 6], [3, 5, 4, 1, 0, 2, 8, 6, 7], [3, 5, 4, 1, 0, 2, 8, 7, 6], 
-    [3, 5, 4, 1, 2, 0, 6, 7, 8], [3, 5, 4, 1, 2, 0, 6, 8, 7], [3, 5, 4, 1, 2, 0, 7, 6, 8], [3, 5, 4, 1, 2, 0, 7, 8, 6], [3, 5, 4, 1, 2, 0, 8, 6, 7], [3, 5, 4, 1, 2, 0, 8, 7, 6], 
-    [3, 5, 4, 2, 0, 1, 6, 7, 8], [3, 5, 4, 2, 0, 1, 6, 8, 7], [3, 5, 4, 2, 0, 1, 7, 6, 8], [3, 5, 4, 2, 0, 1, 7, 8, 6], [3, 5, 4, 2, 0, 1, 8, 6, 7], [3, 5, 4, 2, 0, 1, 8, 7, 6], 
-    [3, 5, 4, 2, 1, 0, 6, 7, 8], [3, 5, 4, 2, 1, 0, 6, 8, 7], [3, 5, 4, 2, 1, 0, 7, 6, 8], [3, 5, 4, 2, 1, 0, 7, 8, 6], [3, 5, 4, 2, 1, 0, 8, 6, 7], [3, 5, 4, 2, 1, 0, 8, 7, 6], 
-    [4, 3, 5, 0, 1, 2, 6, 7, 8], [4, 3, 5, 0, 1, 2, 6, 8, 7], [4, 3, 5, 0, 1, 2, 7, 6, 8], [4, 3, 5, 0, 1, 2, 7, 8, 6], [4, 3, 5, 0, 1, 2, 8, 6, 7], [4, 3, 5, 0, 1, 2, 8, 7, 6], 
-    [4, 3, 5, 0, 2, 1, 6, 7, 8], [4, 3, 5, 0, 2, 1, 6, 8, 7], [4, 3, 5, 0, 2, 1, 7, 6, 8], [4, 3, 5, 0, 2, 1, 7, 8, 6], [4, 3, 5, 0, 2, 1, 8, 6, 7], [4, 3, 5, 0, 2, 1, 8, 7, 6], 
-    [4, 3, 5, 1, 0, 2, 6, 7, 8], [4, 3, 5, 1, 0, 2, 6, 8, 7], [4, 3, 5, 1, 0, 2, 7, 6, 8], [4, 3, 5, 1, 0, 2, 7, 8, 6], [4, 3, 5, 1, 0, 2, 8, 6, 7], [4, 3, 5, 1, 0, 2, 8, 7, 6], 
-    [4, 3, 5, 1, 2, 0, 6, 7, 8], [4, 3, 5, 1, 2, 0, 6, 8, 7], [4, 3, 5, 1, 2, 0, 7, 6, 8], [4, 3, 5, 1, 2, 0, 7, 8, 6], [4, 3, 5, 1, 2, 0, 8, 6, 7], [4, 3, 5, 1, 2, 0, 8, 7, 6], 
-    [4, 3, 5, 2, 0, 1, 6, 7, 8], [4, 3, 5, 2, 0, 1, 6, 8, 7], [4, 3, 5, 2, 0, 1, 7, 6, 8], [4, 3, 5, 2, 0, 1, 7, 8, 6], [4, 3, 5, 2, 0, 1, 8, 6, 7], [4, 3, 5, 2, 0, 1, 8, 7, 6], 
-    [4, 3, 5, 2, 1, 0, 6, 7, 8], [4, 3, 5, 2, 1, 0, 6, 8, 7], [4, 3, 5, 2, 1, 0, 7, 6, 8], [4, 3, 5, 2, 1, 0, 7, 8, 6], [4, 3, 5, 2, 1, 0, 8, 6, 7], [4, 3, 5, 2, 1, 0, 8, 7, 6], 
-    [4, 5, 3, 0, 1, 2, 6, 7, 8], [4, 5, 3, 0, 1, 2, 6, 8, 7], [4, 5, 3, 0, 1, 2, 7, 6, 8], [4, 5, 3, 0, 1, 2, 7, 8, 6], [4, 5, 3, 0, 1, 2, 8, 6, 7], [4, 5, 3, 0, 1, 2, 8, 7, 6], 
-    [4, 5, 3, 0, 2, 1, 6, 7, 8], [4, 5, 3, 0, 2, 1, 6, 8, 7], [4, 5, 3, 0, 2, 1, 7, 6, 8], [4, 5, 3, 0, 2, 1, 7, 8, 6], [4, 5, 3, 0, 2, 1, 8, 6, 7], [4, 5, 3, 0, 2, 1, 8, 7, 6], 
-    [4, 5, 3, 1, 0, 2, 6, 7, 8], [4, 5, 3, 1, 0, 2, 6, 8, 7], [4, 5, 3, 1, 0, 2, 7, 6, 8], [4, 5, 3, 1, 0, 2, 7, 8, 6], [4, 5, 3, 1, 0, 2, 8, 6, 7], [4, 5, 3, 1, 0, 2, 8, 7, 6], 
-    [4, 5, 3, 1, 2, 0, 6, 7, 8], [4, 5, 3, 1, 2, 0, 6, 8, 7], [4, 5, 3, 1, 2, 0, 7, 6, 8], [4, 5, 3, 1, 2, 0, 7, 8, 6], [4, 5, 3, 1, 2, 0, 8, 6, 7], [4, 5, 3, 1, 2, 0, 8, 7, 6], 
-    [4, 5, 3, 2, 0, 1, 6, 7, 8], [4, 5, 3, 2, 0, 1, 6, 8, 7], [4, 5, 3, 2, 0, 1, 7, 6, 8], [4, 5, 3, 2, 0, 1, 7, 8, 6], [4, 5, 3, 2, 0, 1, 8, 6, 7], [4, 5, 3, 2, 0, 1, 8, 7, 6], 
-    [4, 5, 3, 2, 1, 0, 6, 7, 8], [4, 5, 3, 2, 1, 0, 6, 8, 7], [4, 5, 3, 2, 1, 0, 7, 6, 8], [4, 5, 3, 2, 1, 0, 7, 8, 6], [4, 5, 3, 2, 1, 0, 8, 6, 7], [4, 5, 3, 2, 1, 0, 8, 7, 6], 
-    [5, 3, 4, 0, 1, 2, 6, 7, 8], [5, 3, 4, 0, 1, 2, 6, 8, 7], [5, 3, 4, 0, 1, 2, 7, 6, 8], [5, 3, 4, 0, 1, 2, 7, 8, 6], [5, 3, 4, 0, 1, 2, 8, 6, 7], [5, 3, 4, 0, 1, 2, 8, 7, 6], 
-    [5, 3, 4, 0, 2, 1, 6, 7, 8], [5, 3, 4, 0, 2, 1, 6, 8, 7], [5, 3, 4, 0, 2, 1, 7, 6, 8], [5, 3, 4, 0, 2, 1, 7, 8, 6], [5, 3, 4, 0, 2, 1, 8, 6, 7], [5, 3, 4, 0, 2, 1, 8, 7, 6], 
-    [5, 3, 4, 1, 0, 2, 6, 7, 8], [5, 3, 4, 1, 0, 2, 6, 8, 7], [5, 3, 4, 1, 0, 2, 7, 6, 8], [5, 3, 4, 1, 0, 2, 7, 8, 6], [5, 3, 4, 1, 0, 2, 8, 6, 7], [5, 3, 4, 1, 0, 2, 8, 7, 6], 
-    [5, 3, 4, 1, 2, 0, 6, 7, 8], [5, 3, 4, 1, 2, 0, 6, 8, 7], [5, 3, 4, 1, 2, 0, 7, 6, 8], [5, 3, 4, 1, 2, 0, 7, 8, 6], [5, 3, 4, 1, 2, 0, 8, 6, 7], [5, 3, 4, 1, 2, 0, 8, 7, 6], 
-    [5, 3, 4, 2, 0, 1, 6, 7, 8], [5, 3, 4, 2, 0, 1, 6, 8, 7], [5, 3, 4, 2, 0, 1, 7, 6, 8], [5, 3, 4, 2, 0, 1, 7, 8, 6], [5, 3, 4, 2, 0, 1, 8, 6, 7], [5, 3, 4, 2, 0, 1, 8, 7, 6], 
-    [5, 3, 4, 2, 1, 0, 6, 7, 8], [5, 3, 4, 2, 1, 0, 6, 8, 7], [5, 3, 4, 2, 1, 0, 7, 6, 8], [5, 3, 4, 2, 1, 0, 7, 8, 6], [5, 3, 4, 2, 1, 0, 8, 6, 7], [5, 3, 4, 2, 1, 0, 8, 7, 6], 
-    [5, 4, 3, 0, 1, 2, 6, 7, 8], [5, 4, 3, 0, 1, 2, 6, 8, 7], [5, 4, 3, 0, 1, 2, 7, 6, 8], [5, 4, 3, 0, 1, 2, 7, 8, 6], [5, 4, 3, 0, 1, 2, 8, 6, 7], [5, 4, 3, 0, 1, 2, 8, 7, 6], 
-    [5, 4, 3, 0, 2, 1, 6, 7, 8], [5, 4, 3, 0, 2, 1, 6, 8, 7], [5, 4, 3, 0, 2, 1, 7, 6, 8], [5, 4, 3, 0, 2, 1, 7, 8, 6], [5, 4, 3, 0, 2, 1, 8, 6, 7], [5, 4, 3, 0, 2, 1, 8, 7, 6], 
-    [5, 4, 3, 1, 0, 2, 6, 7, 8], [5, 4, 3, 1, 0, 2, 6, 8, 7], [5, 4, 3, 1, 0, 2, 7, 6, 8], [5, 4, 3, 1, 0, 2, 7, 8, 6], [5, 4, 3, 1, 0, 2, 8, 6, 7], [5, 4, 3, 1, 0, 2, 8, 7, 6], 
-    [5, 4, 3, 1, 2, 0, 6, 7, 8], [5, 4, 3, 1, 2, 0, 6, 8, 7], [5, 4, 3, 1, 2, 0, 7, 6, 8], [5, 4, 3, 1, 2, 0, 7, 8, 6], [5, 4, 3, 1, 2, 0, 8, 6, 7], [5, 4, 3, 1, 2, 0, 8, 7, 6], 
-    [5, 4, 3, 2, 0, 1, 6, 7, 8], [5, 4, 3, 2, 0, 1, 6, 8, 7], [5, 4, 3, 2, 0, 1, 7, 6, 8], [5, 4, 3, 2, 0, 1, 7, 8, 6], [5, 4, 3, 2, 0, 1, 8, 6, 7], [5, 4, 3, 2, 0, 1, 8, 7, 6], 
-    [5, 4, 3, 2, 1, 0, 6, 7, 8], [5, 4, 3, 2, 1, 0, 6, 8, 7], [5, 4, 3, 2, 1, 0, 7, 6, 8], [5, 4, 3, 2, 1, 0, 7, 8, 6], [5, 4, 3, 2, 1, 0, 8, 6, 7], [5, 4, 3, 2, 1, 0, 8, 7, 6], 
-    [3, 4, 5, 6, 7, 8, 0, 1, 2], [3, 4, 5, 6, 7, 8, 0, 2, 1], [3, 4, 5, 6, 7, 8, 1, 0, 2], [3, 4, 5, 6, 7, 8, 1, 2, 0], [3, 4, 5, 6, 7, 8, 2, 0, 1], [3, 4, 5, 6, 7, 8, 2, 1, 0], 
-    [3, 4, 5, 6, 8, 7, 0, 1, 2], [3, 4, 5, 6, 8, 7, 0, 2, 1], [3, 4, 5, 6, 8, 7, 1, 0, 2], [3, 4, 5, 6, 8, 7, 1, 2, 0], [3, 4, 5, 6, 8, 7, 2, 0, 1], [3, 4, 5, 6, 8, 7, 2, 1, 0], 
-    [3, 4, 5, 7, 6, 8, 0, 1, 2], [3, 4, 5, 7, 6, 8, 0, 2, 1], [3, 4, 5, 7, 6, 8, 1, 0, 2], [3, 4, 5, 7, 6, 8, 1, 2, 0], [3, 4, 5, 7, 6, 8, 2, 0, 1], [3, 4, 5, 7, 6, 8, 2, 1, 0], 
-    [3, 4, 5, 7, 8, 6, 0, 1, 2], [3, 4, 5, 7, 8, 6, 0, 2, 1], [3, 4, 5, 7, 8, 6, 1, 0, 2], [3, 4, 5, 7, 8, 6, 1, 2, 0], [3, 4, 5, 7, 8, 6, 2, 0, 1], [3, 4, 5, 7, 8, 6, 2, 1, 0], 
-    [3, 4, 5, 8, 6, 7, 0, 1, 2], [3, 4, 5, 8, 6, 7, 0, 2, 1], [3, 4, 5, 8, 6, 7, 1, 0, 2], [3, 4, 5, 8, 6, 7, 1, 2, 0], [3, 4, 5, 8, 6, 7, 2, 0, 1], [3, 4, 5, 8, 6, 7, 2, 1, 0], 
-    [3, 4, 5, 8, 7, 6, 0, 1, 2], [3, 4, 5, 8, 7, 6, 0, 2, 1], [3, 4, 5, 8, 7, 6, 1, 0, 2], [3, 4, 5, 8, 7, 6, 1, 2, 0], [3, 4, 5, 8, 7, 6, 2, 0, 1], [3, 4, 5, 8, 7, 6, 2, 1, 0], 
-    [3, 5, 4, 6, 7, 8, 0, 1, 2], [3, 5, 4, 6, 7, 8, 0, 2, 1], [3, 5, 4, 6, 7, 8, 1, 0, 2], [3, 5, 4, 6, 7, 8, 1, 2, 0], [3, 5, 4, 6, 7, 8, 2, 0, 1], [3, 5, 4, 6, 7, 8, 2, 1, 0], 
-    [3, 5, 4, 6, 8, 7, 0, 1, 2], [3, 5, 4, 6, 8, 7, 0, 2, 1], [3, 5, 4, 6, 8, 7, 1, 0, 2], [3, 5, 4, 6, 8, 7, 1, 2, 0], [3, 5, 4, 6, 8, 7, 2, 0, 1], [3, 5, 4, 6, 8, 7, 2, 1, 0], 
-    [3, 5, 4, 7, 6, 8, 0, 1, 2], [3, 5, 4, 7, 6, 8, 0, 2, 1], [3, 5, 4, 7, 6, 8, 1, 0, 2], [3, 5, 4, 7, 6, 8, 1, 2, 0], [3, 5, 4, 7, 6, 8, 2, 0, 1], [3, 5, 4, 7, 6, 8, 2, 1, 0], 
-    [3, 5, 4, 7, 8, 6, 0, 1, 2], [3, 5, 4, 7, 8, 6, 0, 2, 1], [3, 5, 4, 7, 8, 6, 1, 0, 2], [3, 5, 4, 7, 8, 6, 1, 2, 0], [3, 5, 4, 7, 8, 6, 2, 0, 1], [3, 5, 4, 7, 8, 6, 2, 1, 0], 
-    [3, 5, 4, 8, 6, 7, 0, 1, 2], [3, 5, 4, 8, 6, 7, 0, 2, 1], [3, 5, 4, 8, 6, 7, 1, 0, 2], [3, 5, 4, 8, 6, 7, 1, 2, 0], [3, 5, 4, 8, 6, 7, 2, 0, 1], [3, 5, 4, 8, 6, 7, 2, 1, 0], 
-    [3, 5, 4, 8, 7, 6, 0, 1, 2], [3, 5, 4, 8, 7, 6, 0, 2, 1], [3, 5, 4, 8, 7, 6, 1, 0, 2], [3, 5, 4, 8, 7, 6, 1, 2, 0], [3, 5, 4, 8, 7, 6, 2, 0, 1], [3, 5, 4, 8, 7, 6, 2, 1, 0], 
-    [4, 3, 5, 6, 7, 8, 0, 1, 2], [4, 3, 5, 6, 7, 8, 0, 2, 1], [4, 3, 5, 6, 7, 8, 1, 0, 2], [4, 3, 5, 6, 7, 8, 1, 2, 0], [4, 3, 5, 6, 7, 8, 2, 0, 1], [4, 3, 5, 6, 7, 8, 2, 1, 0], 
-    [4, 3, 5, 6, 8, 7, 0, 1, 2], [4, 3, 5, 6, 8, 7, 0, 2, 1], [4, 3, 5, 6, 8, 7, 1, 0, 2], [4, 3, 5, 6, 8, 7, 1, 2, 0], [4, 3, 5, 6, 8, 7, 2, 0, 1], [4, 3, 5, 6, 8, 7, 2, 1, 0], 
-    [4, 3, 5, 7, 6, 8, 0, 1, 2], [4, 3, 5, 7, 6, 8, 0, 2, 1], [4, 3, 5, 7, 6, 8, 1, 0, 2], [4, 3, 5, 7, 6, 8, 1, 2, 0], [4, 3, 5, 7, 6, 8, 2, 0, 1], [4, 3, 5, 7, 6, 8, 2, 1, 0], 
-    [4, 3, 5, 7, 8, 6, 0, 1, 2], [4, 3, 5, 7, 8, 6, 0, 2, 1], [4, 3, 5, 7, 8, 6, 1, 0, 2], [4, 3, 5, 7, 8, 6, 1, 2, 0], [4, 3, 5, 7, 8, 6, 2, 0, 1], [4, 3, 5, 7, 8, 6, 2, 1, 0], 
-    [4, 3, 5, 8, 6, 7, 0, 1, 2], [4, 3, 5, 8, 6, 7, 0, 2, 1], [4, 3, 5, 8, 6, 7, 1, 0, 2], [4, 3, 5, 8, 6, 7, 1, 2, 0], [4, 3, 5, 8, 6, 7, 2, 0, 1], [4, 3, 5, 8, 6, 7, 2, 1, 0], 
-    [4, 3, 5, 8, 7, 6, 0, 1, 2], [4, 3, 5, 8, 7, 6, 0, 2, 1], [4, 3, 5, 8, 7, 6, 1, 0, 2], [4, 3, 5, 8, 7, 6, 1, 2, 0], [4, 3, 5, 8, 7, 6, 2, 0, 1], [4, 3, 5, 8, 7, 6, 2, 1, 0], 
-    [4, 5, 3, 6, 7, 8, 0, 1, 2], [4, 5, 3, 6, 7, 8, 0, 2, 1], [4, 5, 3, 6, 7, 8, 1, 0, 2], [4, 5, 3, 6, 7, 8, 1, 2, 0], [4, 5, 3, 6, 7, 8, 2, 0, 1], [4, 5, 3, 6, 7, 8, 2, 1, 0], 
-    [4, 5, 3, 6, 8, 7, 0, 1, 2], [4, 5, 3, 6, 8, 7, 0, 2, 1], [4, 5, 3, 6, 8, 7, 1, 0, 2], [4, 5, 3, 6, 8, 7, 1, 2, 0], [4, 5, 3, 6, 8, 7, 2, 0, 1], [4, 5, 3, 6, 8, 7, 2, 1, 0], 
-    [4, 5, 3, 7, 6, 8, 0, 1, 2], [4, 5, 3, 7, 6, 8, 0, 2, 1], [4, 5, 3, 7, 6, 8, 1, 0, 2], [4, 5, 3, 7, 6, 8, 1, 2, 0], [4, 5, 3, 7, 6, 8, 2, 0, 1], [4, 5, 3, 7, 6, 8, 2, 1, 0], 
-    [4, 5, 3, 7, 8, 6, 0, 1, 2], [4, 5, 3, 7, 8, 6, 0, 2, 1], [4, 5, 3, 7, 8, 6, 1, 0, 2], [4, 5, 3, 7, 8, 6, 1, 2, 0], [4, 5, 3, 7, 8, 6, 2, 0, 1], [4, 5, 3, 7, 8, 6, 2, 1, 0], 
-    [4, 5, 3, 8, 6, 7, 0, 1, 2], [4, 5, 3, 8, 6, 7, 0, 2, 1], [4, 5, 3, 8, 6, 7, 1, 0, 2], [4, 5, 3, 8, 6, 7, 1, 2, 0], [4, 5, 3, 8, 6, 7, 2, 0, 1], [4, 5, 3, 8, 6, 7, 2, 1, 0], 
-    [4, 5, 3, 8, 7, 6, 0, 1, 2], [4, 5, 3, 8, 7, 6, 0, 2, 1], [4, 5, 3, 8, 7, 6, 1, 0, 2], [4, 5, 3, 8, 7, 6, 1, 2, 0], [4, 5, 3, 8, 7, 6, 2, 0, 1], [4, 5, 3, 8, 7, 6, 2, 1, 0], 
-    [5, 3, 4, 6, 7, 8, 0, 1, 2], [5, 3, 4, 6, 7, 8, 0, 2, 1], [5, 3, 4, 6, 7, 8, 1, 0, 2], [5, 3, 4, 6, 7, 8, 1, 2, 0], [5, 3, 4, 6, 7, 8, 2, 0, 1], [5, 3, 4, 6, 7, 8, 2, 1, 0], 
-    [5, 3, 4, 6, 8, 7, 0, 1, 2], [5, 3, 4, 6, 8, 7, 0, 2, 1], [5, 3, 4, 6, 8, 7, 1, 0, 2], [5, 3, 4, 6, 8, 7, 1, 2, 0], [5, 3, 4, 6, 8, 7, 2, 0, 1], [5, 3, 4, 6, 8, 7, 2, 1, 0], 
-    [5, 3, 4, 7, 6, 8, 0, 1, 2], [5, 3, 4, 7, 6, 8, 0, 2, 1], [5, 3, 4, 7, 6, 8, 1, 0, 2], [5, 3, 4, 7, 6, 8, 1, 2, 0], [5, 3, 4, 7, 6, 8, 2, 0, 1], [5, 3, 4, 7, 6, 8, 2, 1, 0], 
-    [5, 3, 4, 7, 8, 6, 0, 1, 2], [5, 3, 4, 7, 8, 6, 0, 2, 1], [5, 3, 4, 7, 8, 6, 1, 0, 2], [5, 3, 4, 7, 8, 6, 1, 2, 0], [5, 3, 4, 7, 8, 6, 2, 0, 1], [5, 3, 4, 7, 8, 6, 2, 1, 0], 
-    [5, 3, 4, 8, 6, 7, 0, 1, 2], [5, 3, 4, 8, 6, 7, 0, 2, 1], [5, 3, 4, 8, 6, 7, 1, 0, 2], [5, 3, 4, 8, 6, 7, 1, 2, 0], [5, 3, 4, 8, 6, 7, 2, 0, 1], [5, 3, 4, 8, 6, 7, 2, 1, 0], 
-    [5, 3, 4, 8, 7, 6, 0, 1, 2], [5, 3, 4, 8, 7, 6, 0, 2, 1], [5, 3, 4, 8, 7, 6, 1, 0, 2], [5, 3, 4, 8, 7, 6, 1, 2, 0], [5, 3, 4, 8, 7, 6, 2, 0, 1], [5, 3, 4, 8, 7, 6, 2, 1, 0], 
-    [5, 4, 3, 6, 7, 8, 0, 1, 2], [5, 4, 3, 6, 7, 8, 0, 2, 1], [5, 4, 3, 6, 7, 8, 1, 0, 2], [5, 4, 3, 6, 7, 8, 1, 2, 0], [5, 4, 3, 6, 7, 8, 2, 0, 1], [5, 4, 3, 6, 7, 8, 2, 1, 0], 
-    [5, 4, 3, 6, 8, 7, 0, 1, 2], [5, 4, 3, 6, 8, 7, 0, 2, 1], [5, 4, 3, 6, 8, 7, 1, 0, 2], [5, 4, 3, 6, 8, 7, 1, 2, 0], [5, 4, 3, 6, 8, 7, 2, 0, 1], [5, 4, 3, 6, 8, 7, 2, 1, 0], 
-    [5, 4, 3, 7, 6, 8, 0, 1, 2], [5, 4, 3, 7, 6, 8, 0, 2, 1], [5, 4, 3, 7, 6, 8, 1, 0, 2], [5, 4, 3, 7, 6, 8, 1, 2, 0], [5, 4, 3, 7, 6, 8, 2, 0, 1], [5, 4, 3, 7, 6, 8, 2, 1, 0], 
-    [5, 4, 3, 7, 8, 6, 0, 1, 2], [5, 4, 3, 7, 8, 6, 0, 2, 1], [5, 4, 3, 7, 8, 6, 1, 0, 2], [5, 4, 3, 7, 8, 6, 1, 2, 0], [5, 4, 3, 7, 8, 6, 2, 0, 1], [5, 4, 3, 7, 8, 6, 2, 1, 0], 
-    [5, 4, 3, 8, 6, 7, 0, 1, 2], [5, 4, 3, 8, 6, 7, 0, 2, 1], [5, 4, 3, 8, 6, 7, 1, 0, 2], [5, 4, 3, 8, 6, 7, 1, 2, 0], [5, 4, 3, 8, 6, 7, 2, 0, 1], [5, 4, 3, 8, 6, 7, 2, 1, 0], 
-    [5, 4, 3, 8, 7, 6, 0, 1, 2], [5, 4, 3, 8, 7, 6, 0, 2, 1], [5, 4, 3, 8, 7, 6, 1, 0, 2], [5, 4, 3, 8, 7, 6, 1, 2, 0], [5, 4, 3, 8, 7, 6, 2, 0, 1], [5, 4, 3, 8, 7, 6, 2, 1, 0], 
-    [6, 7, 8, 0, 1, 2, 3, 4, 5], [6, 7, 8, 0, 1, 2, 3, 5, 4], [6, 7, 8, 0, 1, 2, 4, 3, 5], [6, 7, 8, 0, 1, 2, 4, 5, 3], [6, 7, 8, 0, 1, 2, 5, 3, 4], [6, 7, 8, 0, 1, 2, 5, 4, 3], 
-    [6, 7, 8, 0, 2, 1, 3, 4, 5], [6, 7, 8, 0, 2, 1, 3, 5, 4], [6, 7, 8, 0, 2, 1, 4, 3, 5], [6, 7, 8, 0, 2, 1, 4, 5, 3], [6, 7, 8, 0, 2, 1, 5, 3, 4], [6, 7, 8, 0, 2, 1, 5, 4, 3], 
-    [6, 7, 8, 1, 0, 2, 3, 4, 5], [6, 7, 8, 1, 0, 2, 3, 5, 4], [6, 7, 8, 1, 0, 2, 4, 3, 5], [6, 7, 8, 1, 0, 2, 4, 5, 3], [6, 7, 8, 1, 0, 2, 5, 3, 4], [6, 7, 8, 1, 0, 2, 5, 4, 3], 
-    [6, 7, 8, 1, 2, 0, 3, 4, 5], [6, 7, 8, 1, 2, 0, 3, 5, 4], [6, 7, 8, 1, 2, 0, 4, 3, 5], [6, 7, 8, 1, 2, 0, 4, 5, 3], [6, 7, 8, 1, 2, 0, 5, 3, 4], [6, 7, 8, 1, 2, 0, 5, 4, 3], 
-    [6, 7, 8, 2, 0, 1, 3, 4, 5], [6, 7, 8, 2, 0, 1, 3, 5, 4], [6, 7, 8, 2, 0, 1, 4, 3, 5], [6, 7, 8, 2, 0, 1, 4, 5, 3], [6, 7, 8, 2, 0, 1, 5, 3, 4], [6, 7, 8, 2, 0, 1, 5, 4, 3], 
-    [6, 7, 8, 2, 1, 0, 3, 4, 5], [6, 7, 8, 2, 1, 0, 3, 5, 4], [6, 7, 8, 2, 1, 0, 4, 3, 5], [6, 7, 8, 2, 1, 0, 4, 5, 3], [6, 7, 8, 2, 1, 0, 5, 3, 4], [6, 7, 8, 2, 1, 0, 5, 4, 3], 
-    [6, 8, 7, 0, 1, 2, 3, 4, 5], [6, 8, 7, 0, 1, 2, 3, 5, 4], [6, 8, 7, 0, 1, 2, 4, 3, 5], [6, 8, 7, 0, 1, 2, 4, 5, 3], [6, 8, 7, 0, 1, 2, 5, 3, 4], [6, 8, 7, 0, 1, 2, 5, 4, 3], 
-    [6, 8, 7, 0, 2, 1, 3, 4, 5], [6, 8, 7, 0, 2, 1, 3, 5, 4], [6, 8, 7, 0, 2, 1, 4, 3, 5], [6, 8, 7, 0, 2, 1, 4, 5, 3], [6, 8, 7, 0, 2, 1, 5, 3, 4], [6, 8, 7, 0, 2, 1, 5, 4, 3], 
-    [6, 8, 7, 1, 0, 2, 3, 4, 5], [6, 8, 7, 1, 0, 2, 3, 5, 4], [6, 8, 7, 1, 0, 2, 4, 3, 5], [6, 8, 7, 1, 0, 2, 4, 5, 3], [6, 8, 7, 1, 0, 2, 5, 3, 4], [6, 8, 7, 1, 0, 2, 5, 4, 3], 
-    [6, 8, 7, 1, 2, 0, 3, 4, 5], [6, 8, 7, 1, 2, 0, 3, 5, 4], [6, 8, 7, 1, 2, 0, 4, 3, 5], [6, 8, 7, 1, 2, 0, 4, 5, 3], [6, 8, 7, 1, 2, 0, 5, 3, 4], [6, 8, 7, 1, 2, 0, 5, 4, 3], 
-    [6, 8, 7, 2, 0, 1, 3, 4, 5], [6, 8, 7, 2, 0, 1, 3, 5, 4], [6, 8, 7, 2, 0, 1, 4, 3, 5], [6, 8, 7, 2, 0, 1, 4, 5, 3], [6, 8, 7, 2, 0, 1, 5, 3, 4], [6, 8, 7, 2, 0, 1, 5, 4, 3], 
-    [6, 8, 7, 2, 1, 0, 3, 4, 5], [6, 8, 7, 2, 1, 0, 3, 5, 4], [6, 8, 7, 2, 1, 0, 4, 3, 5], [6, 8, 7, 2, 1, 0, 4, 5, 3], [6, 8, 7, 2, 1, 0, 5, 3, 4], [6, 8, 7, 2, 1, 0, 5, 4, 3], 
-    [7, 6, 8, 0, 1, 2, 3, 4, 5], [7, 6, 8, 0, 1, 2, 3, 5, 4], [7, 6, 8, 0, 1, 2, 4, 3, 5], [7, 6, 8, 0, 1, 2, 4, 5, 3], [7, 6, 8, 0, 1, 2, 5, 3, 4], [7, 6, 8, 0, 1, 2, 5, 4, 3], 
-    [7, 6, 8, 0, 2, 1, 3, 4, 5], [7, 6, 8, 0, 2, 1, 3, 5, 4], [7, 6, 8, 0, 2, 1, 4, 3, 5], [7, 6, 8, 0, 2, 1, 4, 5, 3], [7, 6, 8, 0, 2, 1, 5, 3, 4], [7, 6, 8, 0, 2, 1, 5, 4, 3], 
-    [7, 6, 8, 1, 0, 2, 3, 4, 5], [7, 6, 8, 1, 0, 2, 3, 5, 4], [7, 6, 8, 1, 0, 2, 4, 3, 5], [7, 6, 8, 1, 0, 2, 4, 5, 3], [7, 6, 8, 1, 0, 2, 5, 3, 4], [7, 6, 8, 1, 0, 2, 5, 4, 3], 
-    [7, 6, 8, 1, 2, 0, 3, 4, 5], [7, 6, 8, 1, 2, 0, 3, 5, 4], [7, 6, 8, 1, 2, 0, 4, 3, 5], [7, 6, 8, 1, 2, 0, 4, 5, 3], [7, 6, 8, 1, 2, 0, 5, 3, 4], [7, 6, 8, 1, 2, 0, 5, 4, 3], 
-    [7, 6, 8, 2, 0, 1, 3, 4, 5], [7, 6, 8, 2, 0, 1, 3, 5, 4], [7, 6, 8, 2, 0, 1, 4, 3, 5], [7, 6, 8, 2, 0, 1, 4, 5, 3], [7, 6, 8, 2, 0, 1, 5, 3, 4], [7, 6, 8, 2, 0, 1, 5, 4, 3], 
-    [7, 6, 8, 2, 1, 0, 3, 4, 5], [7, 6, 8, 2, 1, 0, 3, 5, 4], [7, 6, 8, 2, 1, 0, 4, 3, 5], [7, 6, 8, 2, 1, 0, 4, 5, 3], [7, 6, 8, 2, 1, 0, 5, 3, 4], [7, 6, 8, 2, 1, 0, 5, 4, 3], 
-    [7, 8, 6, 0, 1, 2, 3, 4, 5], [7, 8, 6, 0, 1, 2, 3, 5, 4], [7, 8, 6, 0, 1, 2, 4, 3, 5], [7, 8, 6, 0, 1, 2, 4, 5, 3], [7, 8, 6, 0, 1, 2, 5, 3, 4], [7, 8, 6, 0, 1, 2, 5, 4, 3], 
-    [7, 8, 6, 0, 2, 1, 3, 4, 5], [7, 8, 6, 0, 2, 1, 3, 5, 4], [7, 8, 6, 0, 2, 1, 4, 3, 5], [7, 8, 6, 0, 2, 1, 4, 5, 3], [7, 8, 6, 0, 2, 1, 5, 3, 4], [7, 8, 6, 0, 2, 1, 5, 4, 3], 
-    [7, 8, 6, 1, 0, 2, 3, 4, 5], [7, 8, 6, 1, 0, 2, 3, 5, 4], [7, 8, 6, 1, 0, 2, 4, 3, 5], [7, 8, 6, 1, 0, 2, 4, 5, 3], [7, 8, 6, 1, 0, 2, 5, 3, 4], [7, 8, 6, 1, 0, 2, 5, 4, 3], 
-    [7, 8, 6, 1, 2, 0, 3, 4, 5], [7, 8, 6, 1, 2, 0, 3, 5, 4], [7, 8, 6, 1, 2, 0, 4, 3, 5], [7, 8, 6, 1, 2, 0, 4, 5, 3], [7, 8, 6, 1, 2, 0, 5, 3, 4], [7, 8, 6, 1, 2, 0, 5, 4, 3], 
-    [7, 8, 6, 2, 0, 1, 3, 4, 5], [7, 8, 6, 2, 0, 1, 3, 5, 4], [7, 8, 6, 2, 0, 1, 4, 3, 5], [7, 8, 6, 2, 0, 1, 4, 5, 3], [7, 8, 6, 2, 0, 1, 5, 3, 4], [7, 8, 6, 2, 0, 1, 5, 4, 3], 
-    [7, 8, 6, 2, 1, 0, 3, 4, 5], [7, 8, 6, 2, 1, 0, 3, 5, 4], [7, 8, 6, 2, 1, 0, 4, 3, 5], [7, 8, 6, 2, 1, 0, 4, 5, 3], [7, 8, 6, 2, 1, 0, 5, 3, 4], [7, 8, 6, 2, 1, 0, 5, 4, 3], 
-    [8, 6, 7, 0, 1, 2, 3, 4, 5], [8, 6, 7, 0, 1, 2, 3, 5, 4], [8, 6, 7, 0, 1, 2, 4, 3, 5], [8, 6, 7, 0, 1, 2, 4, 5, 3], [8, 6, 7, 0, 1, 2, 5, 3, 4], [8, 6, 7, 0, 1, 2, 5, 4, 3], 
-    [8, 6, 7, 0, 2, 1, 3, 4, 5], [8, 6, 7, 0, 2, 1, 3, 5, 4], [8, 6, 7, 0, 2, 1, 4, 3, 5], [8, 6, 7, 0, 2, 1, 4, 5, 3], [8, 6, 7, 0, 2, 1, 5, 3, 4], [8, 6, 7, 0, 2, 1, 5, 4, 3], 
-    [8, 6, 7, 1, 0, 2, 3, 4, 5], [8, 6, 7, 1, 0, 2, 3, 5, 4], [8, 6, 7, 1, 0, 2, 4, 3, 5], [8, 6, 7, 1, 0, 2, 4, 5, 3], [8, 6, 7, 1, 0, 2, 5, 3, 4], [8, 6, 7, 1, 0, 2, 5, 4, 3], 
-    [8, 6, 7, 1, 2, 0, 3, 4, 5], [8, 6, 7, 1, 2, 0, 3, 5, 4], [8, 6, 7, 1, 2, 0, 4, 3, 5], [8, 6, 7, 1, 2, 0, 4, 5, 3], [8, 6, 7, 1, 2, 0, 5, 3, 4], [8, 6, 7, 1, 2, 0, 5, 4, 3], 
-    [8, 6, 7, 2, 0, 1, 3, 4, 5], [8, 6, 7, 2, 0, 1, 3, 5, 4], [8, 6, 7, 2, 0, 1, 4, 3, 5], [8, 6, 7, 2, 0, 1, 4, 5, 3], [8, 6, 7, 2, 0, 1, 5, 3, 4], [8, 6, 7, 2, 0, 1, 5, 4, 3], 
-    [8, 6, 7, 2, 1, 0, 3, 4, 5], [8, 6, 7, 2, 1, 0, 3, 5, 4], [8, 6, 7, 2, 1, 0, 4, 3, 5], [8, 6, 7, 2, 1, 0, 4, 5, 3], [8, 6, 7, 2, 1, 0, 5, 3, 4], [8, 6, 7, 2, 1, 0, 5, 4, 3], 
-    [8, 7, 6, 0, 1, 2, 3, 4, 5], [8, 7, 6, 0, 1, 2, 3, 5, 4], [8, 7, 6, 0, 1, 2, 4, 3, 5], [8, 7, 6, 0, 1, 2, 4, 5, 3], [8, 7, 6, 0, 1, 2, 5, 3, 4], [8, 7, 6, 0, 1, 2, 5, 4, 3], 
-    [8, 7, 6, 0, 2, 1, 3, 4, 5], [8, 7, 6, 0, 2, 1, 3, 5, 4], [8, 7, 6, 0, 2, 1, 4, 3, 5], [8, 7, 6, 0, 2, 1, 4, 5, 3], [8, 7, 6, 0, 2, 1, 5, 3, 4], [8, 7, 6, 0, 2, 1, 5, 4, 3], 
-    [8, 7, 6, 1, 0, 2, 3, 4, 5], [8, 7, 6, 1, 0, 2, 3, 5, 4], [8, 7, 6, 1, 0, 2, 4, 3, 5], [8, 7, 6, 1, 0, 2, 4, 5, 3], [8, 7, 6, 1, 0, 2, 5, 3, 4], [8, 7, 6, 1, 0, 2, 5, 4, 3], 
-    [8, 7, 6, 1, 2, 0, 3, 4, 5], [8, 7, 6, 1, 2, 0, 3, 5, 4], [8, 7, 6, 1, 2, 0, 4, 3, 5], [8, 7, 6, 1, 2, 0, 4, 5, 3], [8, 7, 6, 1, 2, 0, 5, 3, 4], [8, 7, 6, 1, 2, 0, 5, 4, 3], 
-    [8, 7, 6, 2, 0, 1, 3, 4, 5], [8, 7, 6, 2, 0, 1, 3, 5, 4], [8, 7, 6, 2, 0, 1, 4, 3, 5], [8, 7, 6, 2, 0, 1, 4, 5, 3], [8, 7, 6, 2, 0, 1, 5, 3, 4], [8, 7, 6, 2, 0, 1, 5, 4, 3], 
-    [8, 7, 6, 2, 1, 0, 3, 4, 5], [8, 7, 6, 2, 1, 0, 3, 5, 4], [8, 7, 6, 2, 1, 0, 4, 3, 5], [8, 7, 6, 2, 1, 0, 4, 5, 3], [8, 7, 6, 2, 1, 0, 5, 3, 4], [8, 7, 6, 2, 1, 0, 5, 4, 3], 
-    [6, 7, 8, 3, 4, 5, 0, 1, 2], [6, 7, 8, 3, 4, 5, 0, 2, 1], [6, 7, 8, 3, 4, 5, 1, 0, 2], [6, 7, 8, 3, 4, 5, 1, 2, 0], [6, 7, 8, 3, 4, 5, 2, 0, 1], [6, 7, 8, 3, 4, 5, 2, 1, 0], 
-    [6, 7, 8, 3, 5, 4, 0, 1, 2], [6, 7, 8, 3, 5, 4, 0, 2, 1], [6, 7, 8, 3, 5, 4, 1, 0, 2], [6, 7, 8, 3, 5, 4, 1, 2, 0], [6, 7, 8, 3, 5, 4, 2, 0, 1], [6, 7, 8, 3, 5, 4, 2, 1, 0], 
-    [6, 7, 8, 4, 3, 5, 0, 1, 2], [6, 7, 8, 4, 3, 5, 0, 2, 1], [6, 7, 8, 4, 3, 5, 1, 0, 2], [6, 7, 8, 4, 3, 5, 1, 2, 0], [6, 7, 8, 4, 3, 5, 2, 0, 1], [6, 7, 8, 4, 3, 5, 2, 1, 0], 
-    [6, 7, 8, 4, 5, 3, 0, 1, 2], [6, 7, 8, 4, 5, 3, 0, 2, 1], [6, 7, 8, 4, 5, 3, 1, 0, 2], [6, 7, 8, 4, 5, 3, 1, 2, 0], [6, 7, 8, 4, 5, 3, 2, 0, 1], [6, 7, 8, 4, 5, 3, 2, 1, 0], 
-    [6, 7, 8, 5, 3, 4, 0, 1, 2], [6, 7, 8, 5, 3, 4, 0, 2, 1], [6, 7, 8, 5, 3, 4, 1, 0, 2], [6, 7, 8, 5, 3, 4, 1, 2, 0], [6, 7, 8, 5, 3, 4, 2, 0, 1], [6, 7, 8, 5, 3, 4, 2, 1, 0], 
-    [6, 7, 8, 5, 4, 3, 0, 1, 2], [6, 7, 8, 5, 4, 3, 0, 2, 1], [6, 7, 8, 5, 4, 3, 1, 0, 2], [6, 7, 8, 5, 4, 3, 1, 2, 0], [6, 7, 8, 5, 4, 3, 2, 0, 1], [6, 7, 8, 5, 4, 3, 2, 1, 0], 
-    [6, 8, 7, 3, 4, 5, 0, 1, 2], [6, 8, 7, 3, 4, 5, 0, 2, 1], [6, 8, 7, 3, 4, 5, 1, 0, 2], [6, 8, 7, 3, 4, 5, 1, 2, 0], [6, 8, 7, 3, 4, 5, 2, 0, 1], [6, 8, 7, 3, 4, 5, 2, 1, 0], 
-    [6, 8, 7, 3, 5, 4, 0, 1, 2], [6, 8, 7, 3, 5, 4, 0, 2, 1], [6, 8, 7, 3, 5, 4, 1, 0, 2], [6, 8, 7, 3, 5, 4, 1, 2, 0], [6, 8, 7, 3, 5, 4, 2, 0, 1], [6, 8, 7, 3, 5, 4, 2, 1, 0], 
-    [6, 8, 7, 4, 3, 5, 0, 1, 2], [6, 8, 7, 4, 3, 5, 0, 2, 1], [6, 8, 7, 4, 3, 5, 1, 0, 2], [6, 8, 7, 4, 3, 5, 1, 2, 0], [6, 8, 7, 4, 3, 5, 2, 0, 1], [6, 8, 7, 4, 3, 5, 2, 1, 0], 
-    [6, 8, 7, 4, 5, 3, 0, 1, 2], [6, 8, 7, 4, 5, 3, 0, 2, 1], [6, 8, 7, 4, 5, 3, 1, 0, 2], [6, 8, 7, 4, 5, 3, 1, 2, 0], [6, 8, 7, 4, 5, 3, 2, 0, 1], [6, 8, 7, 4, 5, 3, 2, 1, 0], 
-    [6, 8, 7, 5, 3, 4, 0, 1, 2], [6, 8, 7, 5, 3, 4, 0, 2, 1], [6, 8, 7, 5, 3, 4, 1, 0, 2], [6, 8, 7, 5, 3, 4, 1, 2, 0], [6, 8, 7, 5, 3, 4, 2, 0, 1], [6, 8, 7, 5, 3, 4, 2, 1, 0], 
-    [6, 8, 7, 5, 4, 3, 0, 1, 2], [6, 8, 7, 5, 4, 3, 0, 2, 1], [6, 8, 7, 5, 4, 3, 1, 0, 2], [6, 8, 7, 5, 4, 3, 1, 2, 0], [6, 8, 7, 5, 4, 3, 2, 0, 1], [6, 8, 7, 5, 4, 3, 2, 1, 0], 
-    [7, 6, 8, 3, 4, 5, 0, 1, 2], [7, 6, 8, 3, 4, 5, 0, 2, 1], [7, 6, 8, 3, 4, 5, 1, 0, 2], [7, 6, 8, 3, 4, 5, 1, 2, 0], [7, 6, 8, 3, 4, 5, 2, 0, 1], [7, 6, 8, 3, 4, 5, 2, 1, 0], 
-    [7, 6, 8, 3, 5, 4, 0, 1, 2], [7, 6, 8, 3, 5, 4, 0, 2, 1], [7, 6, 8, 3, 5, 4, 1, 0, 2], [7, 6, 8, 3, 5, 4, 1, 2, 0], [7, 6, 8, 3, 5, 4, 2, 0, 1], [7, 6, 8, 3, 5, 4, 2, 1, 0], 
-    [7, 6, 8, 4, 3, 5, 0, 1, 2], [7, 6, 8, 4, 3, 5, 0, 2, 1], [7, 6, 8, 4, 3, 5, 1, 0, 2], [7, 6, 8, 4, 3, 5, 1, 2, 0], [7, 6, 8, 4, 3, 5, 2, 0, 1], [7, 6, 8, 4, 3, 5, 2, 1, 0], 
-    [7, 6, 8, 4, 5, 3, 0, 1, 2], [7, 6, 8, 4, 5, 3, 0, 2, 1], [7, 6, 8, 4, 5, 3, 1, 0, 2], [7, 6, 8, 4, 5, 3, 1, 2, 0], [7, 6, 8, 4, 5, 3, 2, 0, 1], [7, 6, 8, 4, 5, 3, 2, 1, 0], 
-    [7, 6, 8, 5, 3, 4, 0, 1, 2], [7, 6, 8, 5, 3, 4, 0, 2, 1], [7, 6, 8, 5, 3, 4, 1, 0, 2], [7, 6, 8, 5, 3, 4, 1, 2, 0], [7, 6, 8, 5, 3, 4, 2, 0, 1], [7, 6, 8, 5, 3, 4, 2, 1, 0], 
-    [7, 6, 8, 5, 4, 3, 0, 1, 2], [7, 6, 8, 5, 4, 3, 0, 2, 1], [7, 6, 8, 5, 4, 3, 1, 0, 2], [7, 6, 8, 5, 4, 3, 1, 2, 0], [7, 6, 8, 5, 4, 3, 2, 0, 1], [7, 6, 8, 5, 4, 3, 2, 1, 0], 
-    [7, 8, 6, 3, 4, 5, 0, 1, 2], [7, 8, 6, 3, 4, 5, 0, 2, 1], [7, 8, 6, 3, 4, 5, 1, 0, 2], [7, 8, 6, 3, 4, 5, 1, 2, 0], [7, 8, 6, 3, 4, 5, 2, 0, 1], [7, 8, 6, 3, 4, 5, 2, 1, 0], 
-    [7, 8, 6, 3, 5, 4, 0, 1, 2], [7, 8, 6, 3, 5, 4, 0, 2, 1], [7, 8, 6, 3, 5, 4, 1, 0, 2], [7, 8, 6, 3, 5, 4, 1, 2, 0], [7, 8, 6, 3, 5, 4, 2, 0, 1], [7, 8, 6, 3, 5, 4, 2, 1, 0], 
-    [7, 8, 6, 4, 3, 5, 0, 1, 2], [7, 8, 6, 4, 3, 5, 0, 2, 1], [7, 8, 6, 4, 3, 5, 1, 0, 2], [7, 8, 6, 4, 3, 5, 1, 2, 0], [7, 8, 6, 4, 3, 5, 2, 0, 1], [7, 8, 6, 4, 3, 5, 2, 1, 0], 
-    [7, 8, 6, 4, 5, 3, 0, 1, 2], [7, 8, 6, 4, 5, 3, 0, 2, 1], [7, 8, 6, 4, 5, 3, 1, 0, 2], [7, 8, 6, 4, 5, 3, 1, 2, 0], [7, 8, 6, 4, 5, 3, 2, 0, 1], [7, 8, 6, 4, 5, 3, 2, 1, 0], 
-    [7, 8, 6, 5, 3, 4, 0, 1, 2], [7, 8, 6, 5, 3, 4, 0, 2, 1], [7, 8, 6, 5, 3, 4, 1, 0, 2], [7, 8, 6, 5, 3, 4, 1, 2, 0], [7, 8, 6, 5, 3, 4, 2, 0, 1], [7, 8, 6, 5, 3, 4, 2, 1, 0], 
-    [7, 8, 6, 5, 4, 3, 0, 1, 2], [7, 8, 6, 5, 4, 3, 0, 2, 1], [7, 8, 6, 5, 4, 3, 1, 0, 2], [7, 8, 6, 5, 4, 3, 1, 2, 0], [7, 8, 6, 5, 4, 3, 2, 0, 1], [7, 8, 6, 5, 4, 3, 2, 1, 0], 
-    [8, 6, 7, 3, 4, 5, 0, 1, 2], [8, 6, 7, 3, 4, 5, 0, 2, 1], [8, 6, 7, 3, 4, 5, 1, 0, 2], [8, 6, 7, 3, 4, 5, 1, 2, 0], [8, 6, 7, 3, 4, 5, 2, 0, 1], [8, 6, 7, 3, 4, 5, 2, 1, 0], 
-    [8, 6, 7, 3, 5, 4, 0, 1, 2], [8, 6, 7, 3, 5, 4, 0, 2, 1], [8, 6, 7, 3, 5, 4, 1, 0, 2], [8, 6, 7, 3, 5, 4, 1, 2, 0], [8, 6, 7, 3, 5, 4, 2, 0, 1], [8, 6, 7, 3, 5, 4, 2, 1, 0], 
-    [8, 6, 7, 4, 3, 5, 0, 1, 2], [8, 6, 7, 4, 3, 5, 0, 2, 1], [8, 6, 7, 4, 3, 5, 1, 0, 2], [8, 6, 7, 4, 3, 5, 1, 2, 0], [8, 6, 7, 4, 3, 5, 2, 0, 1], [8, 6, 7, 4, 3, 5, 2, 1, 0], 
-    [8, 6, 7, 4, 5, 3, 0, 1, 2], [8, 6, 7, 4, 5, 3, 0, 2, 1], [8, 6, 7, 4, 5, 3, 1, 0, 2], [8, 6, 7, 4, 5, 3, 1, 2, 0], [8, 6, 7, 4, 5, 3, 2, 0, 1], [8, 6, 7, 4, 5, 3, 2, 1, 0], 
-    [8, 6, 7, 5, 3, 4, 0, 1, 2], [8, 6, 7, 5, 3, 4, 0, 2, 1], [8, 6, 7, 5, 3, 4, 1, 0, 2], [8, 6, 7, 5, 3, 4, 1, 2, 0], [8, 6, 7, 5, 3, 4, 2, 0, 1], [8, 6, 7, 5, 3, 4, 2, 1, 0], 
-    [8, 6, 7, 5, 4, 3, 0, 1, 2], [8, 6, 7, 5, 4, 3, 0, 2, 1], [8, 6, 7, 5, 4, 3, 1, 0, 2], [8, 6, 7, 5, 4, 3, 1, 2, 0], [8, 6, 7, 5, 4, 3, 2, 0, 1], [8, 6, 7, 5, 4, 3, 2, 1, 0], 
-    [8, 7, 6, 3, 4, 5, 0, 1, 2], [8, 7, 6, 3, 4, 5, 0, 2, 1], [8, 7, 6, 3, 4, 5, 1, 0, 2], [8, 7, 6, 3, 4, 5, 1, 2, 0], [8, 7, 6, 3, 4, 5, 2, 0, 1], [8, 7, 6, 3, 4, 5, 2, 1, 0], 
-    [8, 7, 6, 3, 5, 4, 0, 1, 2], [8, 7, 6, 3, 5, 4, 0, 2, 1], [8, 7, 6, 3, 5, 4, 1, 0, 2], [8, 7, 6, 3, 5, 4, 1, 2, 0], [8, 7, 6, 3, 5, 4, 2, 0, 1], [8, 7, 6, 3, 5, 4, 2, 1, 0], 
-    [8, 7, 6, 4, 3, 5, 0, 1, 2], [8, 7, 6, 4, 3, 5, 0, 2, 1], [8, 7, 6, 4, 3, 5, 1, 0, 2], [8, 7, 6, 4, 3, 5, 1, 2, 0], [8, 7, 6, 4, 3, 5, 2, 0, 1], [8, 7, 6, 4, 3, 5, 2, 1, 0], 
-    [8, 7, 6, 4, 5, 3, 0, 1, 2], [8, 7, 6, 4, 5, 3, 0, 2, 1], [8, 7, 6, 4, 5, 3, 1, 0, 2], [8, 7, 6, 4, 5, 3, 1, 2, 0], [8, 7, 6, 4, 5, 3, 2, 0, 1], [8, 7, 6, 4, 5, 3, 2, 1, 0], 
-    [8, 7, 6, 5, 3, 4, 0, 1, 2], [8, 7, 6, 5, 3, 4, 0, 2, 1], [8, 7, 6, 5, 3, 4, 1, 0, 2], [8, 7, 6, 5, 3, 4, 1, 2, 0], [8, 7, 6, 5, 3, 4, 2, 0, 1], [8, 7, 6, 5, 3, 4, 2, 1, 0], 
-    [8, 7, 6, 5, 4, 3, 0, 1, 2], [8, 7, 6, 5, 4, 3, 0, 2, 1], [8, 7, 6, 5, 4, 3, 1, 0, 2], [8, 7, 6, 5, 4, 3, 1, 2, 0], [8, 7, 6, 5, 4, 3, 2, 0, 1], [8, 7, 6, 5, 4, 3, 2, 1, 0], 
+pub const DIAGONAL_UL_TO_DR_SYMM_ORBITS: [&'static [usize]; 81] = [
+    &[0], &[1, 9], &[2, 18], &[3, 27], &[4, 36], &[5, 45], &[6, 54], &[7, 63], &[8, 72],
+    &[1, 9], &[10], &[11, 19], &[12, 28], &[13, 37], &[14, 46], &[15, 55], &[16, 64], &[17, 73],
+    &[2, 18], &[11, 19], &[20], &[21, 29], &[22, 38], &[23, 47], &[24, 56], &[25, 65], &[26, 74],
+    &[3, 27], &[12, 28], &[21, 29], &[30], &[31, 39], &[32, 48], &[33, 57], &[34, 66], &[35, 75],
+    &[4, 36], &[13, 37], &[22, 38], &[31, 39], &[40], &[41, 49], &[42, 58], &[43, 67], &[44, 76],
+    &[5, 45], &[14, 46], &[23, 47], &[32, 48], &[41, 49], &[50], &[51, 59], &[52, 68], &[53, 77],
+    &[6, 54], &[15, 55], &[24, 56], &[33, 57], &[42, 58], &[51, 59], &[60], &[61, 69], &[62, 78],
+    &[7, 63], &[16, 64], &[25, 65], &[34, 66], &[43, 67], &[52, 68], &[61, 69], &[70], &[71, 79],
+    &[8, 72], &[17, 73], &[26, 74], &[35, 75], &[44, 76], &[53, 77], &[62, 78], &[71, 79], &[80],
+];
+
+pub const DIAGONAL_UR_TO_DL_SYMM_ORBITS: [&'static [usize]; 81] = [
+    &[0, 80], &[1, 71], &[2, 62], &[3, 53], &[4, 44], &[5, 35], &[6, 26], &[7, 17], &[8],
+    &[9, 79], &[10, 70], &[11, 61], &[12, 52], &[13, 43], &[14, 34], &[15, 25], &[16], &[7, 17],
+    &[18, 78], &[19, 69], &[20, 60], &[21, 51], &[22, 42], &[23, 33], &[24], &[15, 25], &[6, 26],
+    &[27, 77], &[28, 68], &[29, 59], &[30, 50], &[31, 41], &[32], &[23, 33], &[14, 34], &[5, 35],
+    &[36, 76], &[37, 67], &[38, 58], &[39, 49], &[40], &[31, 41], &[22, 42], &[13, 43], &[4, 44],
+    &[45, 75], &[46, 66], &[47, 57], &[48], &[39, 49], &[30, 50], &[21, 51], &[12, 52], &[3, 53],
+    &[54, 74], &[55, 65], &[56], &[47, 57], &[38, 58], &[29, 59], &[20, 60], &[11, 61], &[2, 62],
+    &[63, 73], &[64], &[55, 65], &[46, 66], &[37, 67], &[28, 68], &[19, 69], &[10, 70], &[1, 71],
+    &[72], &[63, 73], &[54, 74], &[45, 75], &[36, 76], &[27, 77], &[18, 78], &[9, 79], &[0, 80],
+];
+
+pub const HORIZONTAL_AND_VERTICAL_SYMM_ORBITS: [&'static [usize]; 81] = [
+    &[0, 8, 72, 80], &[1, 7, 73, 79], &[2, 6, 74, 78], &[3, 5, 75, 77], &[4, 76], &[3, 5, 75, 77], &[2, 6, 74, 78], &[1, 7, 73, 79], &[0, 8, 72, 80],
+    &[9, 17, 63, 71], &[10, 16, 64, 70], &[11, 15, 65, 69], &[12, 14, 66, 68], &[13, 67], &[12, 14, 66, 68], &[11, 15, 65, 69], &[10, 16, 64, 70], &[9, 17, 63, 71],
+    &[18, 26, 54, 62], &[19, 25, 55, 61], &[20, 24, 56, 60], &[21, 23, 57, 59], &[22, 58], &[21, 23, 57, 59], &[20, 24, 56, 60], &[19, 25, 55, 61], &[18, 26, 54, 62],
+    &[27, 35, 45, 53], &[28, 34, 46, 52], &[29, 33, 47, 51], &[30, 32, 48, 50], &[31, 49], &[30, 32, 48, 50], &[29, 33, 47, 51], &[28, 34, 46, 52], &[27, 35, 45, 53],
+    &[36, 44], &[37, 43], &[38, 42], &[39, 41], &[40], &[39, 41], &[38, 42], &[37, 43], &[36, 44],
+    &[27, 35, 45, 53], &[28, 34, 46, 52], &[29, 33, 47, 51], &[30, 32, 48, 50], &[31, 49], &[30, 32, 48, 50], &[29, 33, 47, 51], &[28, 34, 46, 52], &[27, 35, 45, 53],
+    &[18, 26, 54, 62], &[19, 25, 55, 61], &[20, 24, 56, 60], &[21, 23, 57, 59], &[22, 58], &[21, 23, 57, 59], &[20, 24, 56, 60], &[19, 25, 55, 61], &[18, 26, 54, 62],
+    &[9, 17, 63, 71], &[10, 16, 64, 70], &[11, 15, 65, 69], &[12, 14, 66, 68], &[13, 67], &[12, 14, 66, 68], &[11, 15, 65, 69], &[10, 16, 64, 70], &[9, 17, 63, 71],
+    &[0, 8, 72, 80], &[1, 7, 73, 79], &[2, 6, 74, 78], &[3, 5, 75, 77], &[4, 76], &[3, 5, 75, 77], &[2, 6, 74, 78], &[1, 7, 73, 79], &[0, 8, 72, 80],
+];
+
+pub const DUAL_DIAGONAL_SYMM_ORBITS: [&'static [usize]; 81] = [
+    &[0, 80], &[1, 9, 71, 79], &[2, 18, 62, 78], &[3, 27, 53, 77], &[4, 36, 44, 76], &[5, 35, 45, 75], &[6, 26, 54, 74], &[7, 17, 63, 73], &[8, 72],
+    &[1, 9, 71, 79], &[10, 70], &[11, 19, 61, 69], &[12, 28, 52, 68], &[13, 37, 43, 67], &[14, 34, 46, 66], &[15, 25, 55, 65], &[16, 64], &[7, 17, 63, 73],
+    &[2, 18, 62, 78], &[11, 19, 61, 69], &[20, 60], &[21, 29, 51, 59], &[22, 38, 42, 58], &[23, 33, 47, 57], &[24, 56], &[15, 25, 55, 65], &[6, 26, 54, 74],
+    &[3, 27, 53, 77], &[12, 28, 52, 68], &[21, 29, 51, 59], &[30, 50], &[31, 39, 41, 49], &[32, 48], &[23, 33, 47, 57], &[14, 34, 46, 66], &[5, 35, 45, 75],
+    &[4, 36, 44, 76], &[13, 37, 43, 67], &[22, 38, 42, 58], &[31, 39, 41, 49], &[40], &[31, 39, 41, 49], &[22, 38, 42, 58], &[13, 37, 43, 67], &[4, 36, 44, 76],
+    &[5, 35, 45, 75], &[14, 34, 46, 66], &[23, 33, 47, 57], &[32, 48], &[31, 39, 41, 49], &[30, 50], &[21, 29, 51, 59], &[12, 28, 52, 68], &[3, 27, 53, 77],
+    &[6, 26, 54, 74], &[15, 25, 55, 65], &[24, 56], &[23, 33, 47, 57], &[22, 38, 42, 58], &[21, 29, 51, 59], &[20, 60], &[11, 19, 61, 69], &[2, 18, 62, 78],
+    &[7, 17, 63, 73], &[16, 64], &[15, 25, 55, 65], &[14, 34, 46, 66], &[13, 37, 43, 67], &[12, 28, 52, 68], &[11, 19, 61, 69], &[10, 70], &[1, 9, 71, 79],
+    &[8, 72], &[7, 17, 63, 73], &[6, 26, 54, 74], &[5, 35, 45, 75], &[4, 36, 44, 76], &[3, 27, 53, 77], &[2, 18, 62, 78], &[1, 9, 71, 79], &[0, 80],
+];
+
+pub const FOURFOLD_ROTATION_SYMM_ORBITS: [&'static [usize]; 81] = [
+    &[0, 8, 72, 80], &[1, 17, 63, 79], &[2, 26, 54, 78], &[3, 35, 45, 77], &[4, 36, 44, 76], &[5, 27, 53, 75], &[6, 18, 62, 74], &[7, 9, 71, 73], &[0, 8, 72, 80],
+    &[7, 9, 71, 73], &[10, 16, 64, 70], &[11, 25, 55, 69], &[12, 34, 46, 68], &[13, 37, 43, 67], &[14, 28, 52, 66], &[15, 19, 61, 65], &[10, 16, 64, 70], &[1, 17, 63, 79],
+    &[6, 18, 62, 74], &[15, 19, 61, 65], &[20, 24, 56, 60], &[21, 33, 47, 59], &[22, 38, 42, 58], &[23, 29, 51, 57], &[20, 24, 56, 60], &[11, 25, 55, 69], &[2, 26, 54, 78],
+    &[5, 27, 53, 75], &[14, 28, 52, 66], &[23, 29, 51, 57], &[30, 32, 48, 50], &[31, 39, 41, 49], &[30, 32, 48, 50], &[21, 33, 47, 59], &[12, 34, 46, 68], &[3, 35, 45, 77],
+    &[4, 36, 44, 76], &[13, 37, 43, 67], &[22, 38, 42, 58], &[31, 39, 41, 49], &[40], &[31, 39, 41, 49], &[22, 38, 42, 58], &[13, 37, 43, 67], &[4, 36, 44, 76],
+    &[3, 35, 45, 77], &[12, 34, 46, 68], &[21, 33, 47, 59], &[30, 32, 48, 50], &[31, 39, 41, 49], &[30, 32, 48, 50], &[23, 29, 51, 57], &[14, 28, 52, 66], &[5, 27, 53, 75],
+    &[2, 26, 54, 78], &[11, 25, 55, 69], &[20, 24, 56, 60], &[23, 29, 51, 57], &[22, 38, 42, 58], &[21, 33, 47, 59], &[20, 24, 56, 60], &[15, 19, 61, 65], &[6, 18, 62, 74],
+    &[1, 17, 63, 79], &[10, 16, 64, 70], &[15, 19, 61, 65], &[14, 28, 52, 66], &[13, 37, 43, 67], &[12, 34, 46, 68], &[11, 25, 55, 69], &[10, 16, 64, 70], &[7, 9, 71, 73],
+    &[0, 8, 72, 80], &[7, 9, 71, 73], &[6, 18, 62, 74], &[5, 27, 53, 75], &[4, 36, 44, 76], &[3, 35, 45, 77], &[2, 26, 54, 78], &[1, 17, 63, 79], &[0, 8, 72, 80],
+];
+
+pub const FULL_SYMM_ORBITS: [&'static [usize]; 81] = [
+    &[0, 8, 72, 80], &[1, 7, 9, 17, 63, 71, 73, 79], &[2, 6, 18, 26, 54, 62, 74, 78], &[3, 5, 27, 35, 45, 53, 75, 77], &[4, 36, 44, 76], &[3, 5, 27, 35, 45, 53, 75, 77], &[2, 6, 18, 26, 54, 62, 74, 78], &[1, 7, 9, 17, 63, 71, 73, 79], &[0, 8, 72, 80],
+    &[1, 7, 9, 17, 63, 71, 73, 79], &[10, 16, 64, 70], &[11, 15, 19, 25, 55, 61, 65, 69], &[12, 14, 28, 34, 46, 52, 66, 68], &[13, 37, 43, 67], &[12, 14, 28, 34, 46, 52, 66, 68], &[11, 15, 19, 25, 55, 61, 65, 69], &[10, 16, 64, 70], &[1, 7, 9, 17, 63, 71, 73, 79],
+    &[2, 6, 18, 26, 54, 62, 74, 78], &[11, 15, 19, 25, 55, 61, 65, 69], &[20, 24, 56, 60], &[21, 23, 29, 33, 47, 51, 57, 59], &[22, 38, 42, 58], &[21, 23, 29, 33, 47, 51, 57, 59], &[20, 24, 56, 60], &[11, 15, 19, 25, 55, 61, 65, 69], &[2, 6, 18, 26, 54, 62, 74, 78],
+    &[3, 5, 27, 35, 45, 53, 75, 77], &[12, 14, 28, 34, 46, 52, 66, 68], &[21, 23, 29, 33, 47, 51, 57, 59], &[30, 32, 48, 50], &[31, 39, 41, 49], &[30, 32, 48, 50], &[21, 23, 29, 33, 47, 51, 57, 59], &[12, 14, 28, 34, 46, 52, 66, 68], &[3, 5, 27, 35, 45, 53, 75, 77],
+    &[4, 36, 44, 76], &[13, 37, 43, 67], &[22, 38, 42, 58], &[31, 39, 41, 49], &[40], &[31, 39, 41, 49], &[22, 38, 42, 58], &[13, 37, 43, 67], &[4, 36, 44, 76],
+    &[3, 5, 27, 35, 45, 53, 75, 77], &[12, 14, 28, 34, 46, 52, 66, 68], &[21, 23, 29, 33, 47, 51, 57, 59], &[30, 32, 48, 50], &[31, 39, 41, 49], &[30, 32, 48, 50], &[21, 23, 29, 33, 47, 51, 57, 59], &[12, 14, 28, 34, 46, 52, 66, 68], &[3, 5, 27, 35, 45, 53, 75, 77],
+    &[2, 6, 18, 26, 54, 62, 74, 78], &[11, 15, 19, 25, 55, 61, 65, 69], &[20, 24, 56, 60], &[21, 23, 29, 33, 47, 51, 57, 59], &[22, 38, 42, 58], &[21, 23, 29, 33, 47, 51, 57, 59], &[20, 24, 56, 60], &[11, 15, 19, 25, 55, 61, 65, 69], &[2, 6, 18, 26, 54, 62, 74, 78],
+    &[1, 7, 9, 17, 63, 71, 73, 79], &[10, 16, 64, 70], &[11, 15, 19, 25, 55, 61, 65, 69], &[12, 14, 28, 34, 46, 52, 66, 68], &[13, 37, 43, 67], &[12, 14, 28, 34, 46, 52, 66, 68], &[11, 15, 19, 25, 55, 61, 65, 69], &[10, 16, 64, 70], &[1, 7, 9, 17, 63, 71, 73, 79],
+    &[0, 8, 72, 80], &[1, 7, 9, 17, 63, 71, 73, 79], &[2, 6, 18, 26, 54, 62, 74, 78], &[3, 5, 27, 35, 45, 53, 75, 77], &[4, 36, 44, 76], &[3, 5, 27, 35, 45, 53, 75, 77], &[2, 6, 18, 26, 54, 62, 74, 78], &[1, 7, 9, 17, 63, 71, 73, 79], &[0, 8, 72, 80],
 ];

@@ -9,7 +9,7 @@ use crate::sudoku::{ALL_DIGITS, BOX_INDICES, BOXES, COL_INDICES, COLS, PEERS, RO
 /// - Naked and Hidden Subsets
 pub struct BasicSolver {
     sukaku: Sukaku,
-    placed: [bool; 81],
+    placed: Bitmask<u128>,
     placed_count: usize,
     missing_from_rows: [Bitmask<u16>; 9],
     missing_from_cols: [Bitmask<u16>; 9],
@@ -27,7 +27,7 @@ impl BasicSolver {
     /// Initialise a solver with the clues from the given Sukaku
     pub fn for_sukaku(sukaku: Sukaku) -> Self {
         Self { 
-            sukaku, placed: [false; 81], placed_count: 0, 
+            sukaku, placed: Bitmask::<u128>::empty(), placed_count: 0, 
             missing_from_rows: [ALL_DIGITS; 9], missing_from_cols: [ALL_DIGITS; 9], missing_from_boxes: [ALL_DIGITS; 9] 
         }
     }
@@ -37,7 +37,7 @@ impl BasicSolver {
     pub fn step_basics(&mut self) -> Option<bool> {
         if self.do_naked_singles()? { return Some(true); }
         if self.do_hidden_singles()? { return Some(true); }
-        Some(self.do_intersections() || self.do_all_subsets())
+        Some(self.do_intersections() || self.do_subsets())
     }
 
     /// Carry out all basic deductions until no more remain
@@ -60,11 +60,11 @@ impl BasicSolver {
     fn place(&mut self, idx: usize, mask: Bitmask<u16>) {
         self.sukaku[idx] = mask;
         for jdx in PEERS[idx] { self.sukaku[jdx] &= !mask; }
-        self.placed[idx] = true;
+        self.placed.set(idx);
         self.placed_count += 1;
-        self.missing_from_rows[ROW_INDICES[idx]] ^= mask;
-        self.missing_from_cols[COL_INDICES[idx]] ^= mask;
-        self.missing_from_boxes[BOX_INDICES[idx]] ^= mask;
+        self.missing_from_rows[ROW_INDICES[idx]] &= !mask;
+        self.missing_from_cols[COL_INDICES[idx]] &= !mask;
+        self.missing_from_boxes[BOX_INDICES[idx]] &= !mask;
     }
 
     /// Eliminate the given digits (represented by a bitmask) from the location
@@ -82,7 +82,7 @@ impl BasicSolver {
     fn do_naked_singles(&mut self) -> Option<bool> {
         let mut made_progress = false;
         for idx in 0 .. 81 {
-            if !self.placed[idx] {
+            if !self.placed.contains(idx) {
                 match self.sukaku[idx].count_ones() {
                     0 => { return None; }
                     1 => {
@@ -104,7 +104,7 @@ impl BasicSolver {
             ($regions:expr, $missing:expr) => {
                 for (region_idx, region) in $regions.iter().enumerate() {
                     let (mut at_least_once, mut more_than_once) = (Bitmask::<u16>::empty(), Bitmask::<u16>::empty());
-                    for &idx in region.iter().filter(|&&idx| !self.placed[idx]) {
+                    for &idx in region.iter().filter(|&&idx| !self.placed.contains(idx)) {
                         let mask = self.sukaku[idx];
                         more_than_once |= at_least_once & mask;
                         at_least_once |= mask;
@@ -141,7 +141,7 @@ impl BasicSolver {
         macro_rules! do_intersections {
             ($left:expr, $left_indices:expr, $right:expr, $right_indices:expr, $missing:expr) => {
                 for (left_idx, left) in $left.iter().enumerate() {
-                    for mask in $missing[left_idx].into_mask_iter().map(Bitmask::<u16>::from) {
+                    for mask in $missing[left_idx].as_mask_iter().map(Bitmask::<u16>::from) {
                         if let Ok(right_idx) = left.iter().filter(|&&idx| (self.sukaku[idx] & mask).is_not_empty()).map(|&idx| $right_indices[idx]).all_equal_value() {
                             for &idx in &$right[right_idx] {
                                 if $left_indices[idx] != left_idx {
@@ -163,49 +163,21 @@ impl BasicSolver {
     }
 
     /// Find and apply all Naked and Hidden Subsets
-    fn do_all_subsets(&mut self) -> bool {
-        let mut made_progress = false;
-        made_progress |= self.do_subsets(2);
-        made_progress |= self.do_subsets(3);
-        made_progress |= self.do_subsets(4);
-        made_progress
-    }
-
-    fn do_subsets(&mut self, sz: usize) -> bool {
+    fn do_subsets(&mut self) -> bool {
         let mut made_progress = false;
 
         macro_rules! do_subsets {
             ($regions:expr, $missing:expr) => {
-                for (idx, region) in $regions.iter().enumerate() {
-                    if ($missing[idx].count_ones() as usize) < 2 * sz { continue; }
-                    let unsolved_cells = region.iter().copied().filter(|&idx| !self.placed[idx]).collect_vec();
-                    for sz in [sz, unsolved_cells.len() - sz] {
-                        let (mut indices, mut masks) = (Vec::with_capacity(sz), Vec::with_capacity(sz));
-                        for jdx in 0 .. sz { 
-                            indices.push(jdx); 
-                            masks.push(*masks.last().unwrap_or(&Bitmask::<u16>::empty()) | self.sukaku[unsolved_cells[jdx]]); 
-                        }
-                        loop {
-                            let mask = *masks.last().unwrap();
-                            if mask.count_ones() as usize == sz {
-                                for &idx in &unsolved_cells {
-                                    if (self.sukaku[idx] & !mask).is_not_empty() {
-                                        made_progress |= self.eliminate(idx, mask);
-                                    }
-                                }
-                            }
-                            while indices.len() > 0 && indices[indices.len() - 1] == unsolved_cells.len() - (sz + 1 - indices.len()) {
-                                indices.pop(); 
-                                masks.pop();
-                            }
-                            if indices.len() > 0 {
-                                *indices.last_mut().unwrap() += 1;
-                                while indices.len() < sz {
-                                    indices.push(*indices.last().unwrap() + 1);
-                                    masks.push(*masks.last().unwrap() | self.sukaku[unsolved_cells[*indices.last().unwrap()]]);
-                                }
-                            } else {
-                                break;
+                for region in $regions.iter() {
+                    let unsolved_cells = Bitmask::<u128>::from_iter(region.iter().copied().filter(|&idx| !self.placed.contains(idx)));
+                    let unsolved_count = unsolved_cells.count_ones();
+                    for subset in unsolved_cells.as_subset_iter() {
+                        let sz = subset.count_ones();
+                        if sz < 2 || sz > unsolved_count.saturating_sub(2) { continue; }
+                        let covered = subset.as_bit_iter().map(|idx| self.sukaku[idx]).reduce(|a, b| a | b).unwrap();
+                        if covered.count_ones() == sz {
+                            for cell in (unsolved_cells & !subset).as_bit_iter() {
+                                made_progress |= self.eliminate(cell, covered);
                             }
                         }
                     }
