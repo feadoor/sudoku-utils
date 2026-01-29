@@ -7,7 +7,7 @@ use crate::bitmask::Bitmask;
 use crate::expansion::Expansion;
 use crate::filter::Filter;
 use crate::generate::GenerationBase;
-use crate::sudoku::{ALL_DIGITS, BOX_INDICES, COL_INDICES, ROW_INDICES, Sudoku};
+use crate::sudoku::Sudoku;
 
 pub struct RegionMaskedSudoku {
     sudoku: Sudoku,
@@ -35,7 +35,7 @@ impl Pipeline {
         for step in self.steps {
             match step {
                 PipelineStep::Filter(filter) => {
-                    base_iterator = Box::new(base_iterator.filter(move |(_, _, sudoku)| filter.matches(&sudoku.borrow().sudoku)));
+                    base_iterator = Box::new(base_iterator.filter(move |(_, _, sudoku)| filter.matches(&sudoku.borrow())));
                 }
                 PipelineStep::Expansion(expansion) => {
                     base_iterator = Box::new(base_iterator.flat_map(move |(progress, scale, sudoku)| 
@@ -65,6 +65,31 @@ impl RegionMaskedSudoku {
     }
 
     #[inline(always)]
+    pub fn sudoku(&self) -> &Sudoku {
+        &self.sudoku
+    }
+
+    #[inline(always)]
+    pub fn rows(&self) -> &[Bitmask<u16>; 9] {
+        &self.rows
+    }
+
+    #[inline(always)]
+    pub fn cols(&self) -> &[Bitmask<u16>; 9] {
+        &self.cols
+    }
+
+    #[inline(always)]
+    pub fn boxes(&self) -> &[Bitmask<u16>; 9] {
+        &self.boxes
+    }
+
+    #[inline(always)]
+    pub fn empty_cells(&self) -> usize {
+        self.rows.iter().map(|row| row.count_ones() as usize).sum()
+    }
+
+    #[inline(always)]
     pub fn place(&mut self, idx: usize, digit: u8) {
         self.sudoku[idx] = digit;
         self.rows[ROW_INDICES[idx]].unset(digit);
@@ -87,6 +112,45 @@ impl RegionMaskedSudoku {
 
     #[inline(always)]
     pub fn candidates(&self, idx: usize) -> Bitmask<u16> {
-        self.rows[ROW_INDICES[idx]] & self.cols[COL_INDICES[idx]] & self.boxes[BOX_INDICES[idx]]
+        if self.sudoku[idx] != 0 { Bitmask::<u16>::singleton(self.sudoku[idx]) }
+        else { self.rows[ROW_INDICES[idx]] & self.cols[COL_INDICES[idx]] & self.boxes[BOX_INDICES[idx]] }
     }
 }
+
+pub const ALL_DIGITS: Bitmask<u16> = Bitmask::<u16>::from(0b_111_111_111_0);
+
+pub const ROW_INDICES: [usize; 81] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 1,
+    2, 2, 2, 2, 2, 2, 2, 2, 2,
+    3, 3, 3, 3, 3, 3, 3, 3, 3,
+    4, 4, 4, 4, 4, 4, 4, 4, 4,
+    5, 5, 5, 5, 5, 5, 5, 5, 5,
+    6, 6, 6, 6, 6, 6, 6, 6, 6,
+    7, 7, 7, 7, 7, 7, 7, 7, 7,
+    8, 8, 8, 8, 8, 8, 8, 8, 8,
+];
+
+pub const COL_INDICES: [usize; 81] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8,
+    0, 1, 2, 3, 4, 5, 6, 7, 8,
+    0, 1, 2, 3, 4, 5, 6, 7, 8,
+    0, 1, 2, 3, 4, 5, 6, 7, 8,
+    0, 1, 2, 3, 4, 5, 6, 7, 8,
+    0, 1, 2, 3, 4, 5, 6, 7, 8,
+    0, 1, 2, 3, 4, 5, 6, 7, 8,
+    0, 1, 2, 3, 4, 5, 6, 7, 8,
+    0, 1, 2, 3, 4, 5, 6, 7, 8,
+];
+
+pub const BOX_INDICES: [usize; 81] = [
+    0, 0, 0, 1, 1, 1, 2, 2, 2,
+    0, 0, 0, 1, 1, 1, 2, 2, 2,
+    0, 0, 0, 1, 1, 1, 2, 2, 2,
+    3, 3, 3, 4, 4, 4, 5, 5, 5,
+    3, 3, 3, 4, 4, 4, 5, 5, 5,
+    3, 3, 3, 4, 4, 4, 5, 5, 5,
+    6, 6, 6, 7, 7, 7, 8, 8, 8,
+    6, 6, 6, 7, 7, 7, 8, 8, 8,
+    6, 6, 6, 7, 7, 7, 8, 8, 8,
+];

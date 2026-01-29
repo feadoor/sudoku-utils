@@ -1,5 +1,3 @@
-use std::io::Write;
-
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
 
@@ -27,7 +25,7 @@ fn main() {
     let bar = ProgressBar::new(100_000);
     bar.set_style(ProgressStyle::with_template("[{elapsed_precise}] {bar:50} {percent_precise}%")
         .unwrap()
-        .progress_chars("#-."));
+        .progress_chars("#~."));
     let template = Template::from_str(&"\
         .56.7.8.9\
         X........\
@@ -44,13 +42,12 @@ fn main() {
         steps: vec![
             PipelineStep::Expansion(Expansion::plus_n(4, DihedralSubgroup::DiagonalUrToDlSymm, "r1c1,r1c4,r1c6,r1c8,r4c1,r6c1,r9c1,r9c4,r9c6,r9c9,r2c9,r4c9,r6c9")),
             PipelineStep::Filter(Filter::HasUniqueSolution),
-            PipelineStep::Filter(Filter::at_most_n_basic_placements(3)),
+            PipelineStep::Filter(Filter::at_most_n_basic_placements(1)),
             PipelineStep::Filter(Filter::solves_with_basics_after_elims("4r4c6,4r1c1,4r9c1,4r9c9")),
         ],
     };
     pipeline.into_iter(&bar).for_each(|sudoku| {
         println!("{}", sudoku.digits().join(""));
-        std::io::stdout().flush().unwrap();
     });
     bar.finish();
 }
