@@ -1,10 +1,6 @@
 use std::ops::{Index, IndexMut};
 
-use itertools::Itertools;
-
-use crate::{bitmask::Bitmask, pipeline::RegionMaskedSudoku};
-
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Sudoku(pub [u8; 81]);
 
 impl Sudoku {

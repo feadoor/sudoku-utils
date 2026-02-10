@@ -34,7 +34,7 @@ impl Pipeline {
         }));
         for step in self.steps {
             match step {
-                PipelineStep::Filter(filter) => {
+                PipelineStep::Filter(mut filter) => {
                     base_iterator = Box::new(base_iterator.filter(move |(_, _, sudoku)| filter.matches(&sudoku.borrow())));
                 }
                 PipelineStep::Expansion(expansion) => {
@@ -67,21 +67,6 @@ impl RegionMaskedSudoku {
     #[inline(always)]
     pub fn sudoku(&self) -> &Sudoku {
         &self.sudoku
-    }
-
-    #[inline(always)]
-    pub fn rows(&self) -> &[Bitmask<u16>; 9] {
-        &self.rows
-    }
-
-    #[inline(always)]
-    pub fn cols(&self) -> &[Bitmask<u16>; 9] {
-        &self.cols
-    }
-
-    #[inline(always)]
-    pub fn boxes(&self) -> &[Bitmask<u16>; 9] {
-        &self.boxes
     }
 
     #[inline(always)]

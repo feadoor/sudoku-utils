@@ -1,21 +1,27 @@
+use std::collections::HashSet;
+
 use crate::fast_solver::FastBruteForceSolver;
 use crate::logic::BasicSolver;
+use crate::minlex::minlex;
 use crate::pipeline::RegionMaskedSudoku;
+use crate::sudoku::Sudoku;
 
 pub enum Filter {
     AtMostNBasicPlacements { n: usize },
     SolvesWithBasicsAfterElims { elims: Vec<((usize, usize), u8)> },
     HasAnySolution,
     HasUniqueSolution,
+    NonEquivalent { seen_minlexes: HashSet<Sudoku> },
 }
 
 impl Filter {
-    pub fn matches(&self, sudoku: &RegionMaskedSudoku) -> bool {
+    pub fn matches(&mut self, sudoku: &RegionMaskedSudoku) -> bool {
         match self {
             Self::AtMostNBasicPlacements { n } => at_most_n_basic_placements(*n, sudoku),
             Self::SolvesWithBasicsAfterElims { elims } => solves_with_basics_after_elims(elims, sudoku),
             Self::HasAnySolution => FastBruteForceSolver::has_solution(sudoku.sudoku()),
             Self::HasUniqueSolution => FastBruteForceSolver::has_unique_solution(sudoku.sudoku()),
+            Self::NonEquivalent { seen_minlexes } => non_equivalent(sudoku.sudoku(), seen_minlexes),
         }
     }
 
@@ -32,6 +38,10 @@ impl Filter {
             digits.chars().map(|d| d.to_digit(10).unwrap() as u8).map(move |d| ((r - 1, c - 1), d))
         });
         Self::SolvesWithBasicsAfterElims { elims: elims.collect() }
+    }
+
+    pub fn non_equivalent() -> Self {
+        Self::NonEquivalent { seen_minlexes: HashSet::new() }
     }
 }
 
@@ -51,4 +61,8 @@ fn solves_with_basics_after_elims(elims: &[((usize, usize), u8)], sudoku: &Regio
     solver.eliminate_candidates(elims);
     solver.solve_basics();
     solver.is_solved()
+}
+
+fn non_equivalent(sudoku: &Sudoku, seen_minlexes: &mut HashSet<Sudoku>) -> bool {
+    seen_minlexes.insert(minlex(sudoku))
 }
