@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 use crate::fast_solver::FastBruteForceSolver;
 use crate::logic::BasicSolver;
@@ -11,11 +12,11 @@ pub enum Filter {
     SolvesWithBasicsAfterElims { elims: Vec<((usize, usize), u8)> },
     HasAnySolution,
     HasUniqueSolution,
-    NonEquivalent { seen_minlexes: HashSet<Sudoku> },
+    NonEquivalent { seen_minlexes: Arc<Mutex<HashSet<Sudoku>>> },
 }
 
 impl Filter {
-    pub fn matches(&mut self, sudoku: &RegionMaskedSudoku) -> bool {
+    pub fn matches(&self, sudoku: &RegionMaskedSudoku) -> bool {
         match self {
             Self::AtMostNBasicPlacements { n } => at_most_n_basic_placements(*n, sudoku),
             Self::SolvesWithBasicsAfterElims { elims } => solves_with_basics_after_elims(elims, sudoku),
@@ -41,7 +42,7 @@ impl Filter {
     }
 
     pub fn non_equivalent() -> Self {
-        Self::NonEquivalent { seen_minlexes: HashSet::new() }
+        Self::NonEquivalent { seen_minlexes: Arc::new(Mutex::new(HashSet::new())) }
     }
 }
 
@@ -63,6 +64,7 @@ fn solves_with_basics_after_elims(elims: &[((usize, usize), u8)], sudoku: &Regio
     solver.is_solved()
 }
 
-fn non_equivalent(sudoku: &Sudoku, seen_minlexes: &mut HashSet<Sudoku>) -> bool {
-    seen_minlexes.insert(minlex(sudoku))
+fn non_equivalent(sudoku: &Sudoku, seen_minlexes: &Mutex<HashSet<Sudoku>>) -> bool {
+    let canonical = minlex(sudoku);
+    seen_minlexes.lock().unwrap().insert(canonical)
 }

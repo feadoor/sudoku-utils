@@ -8,7 +8,7 @@ pub enum GenerationBase {
 }
 
 impl GenerationBase {
-    pub fn iter(&self) -> Box<dyn Iterator<Item = (f64, f64, RegionMaskedSudoku)>> {
+    pub fn iter(&self) -> Box<dyn Iterator<Item = (f64, f64, RegionMaskedSudoku)> + Send> {
         match self {
             Self::Template(template) => Box::new(DepthFirstSearcherWithProgress::new(TemplateGeneratorState::for_template(template))),
         }

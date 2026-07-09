@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 indicatif = "0.18.3"
 itertools = "0.14.0"
+rayon = "1.12.0"

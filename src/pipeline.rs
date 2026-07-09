@@ -1,7 +1,5 @@
-use std::cell::Cell;
-use std::rc::Rc;
-
 use indicatif::ProgressBar;
+use rayon::prelude::*;
 
 use crate::bitmask::Bitmask;
 use crate::expansion::Expansion;
@@ -28,41 +26,41 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    pub fn into_iter(self, bar: &ProgressBar) -> impl Iterator<Item = Sudoku> + '_ {
-        const PROGRESS_UPDATE_INTERVAL: u64 = 4096;
+    pub fn run_parallel<F>(self, bar: &ProgressBar, sink: F)
+    where
+        F: Fn(Sudoku) + Sync + Send,
+    {
         let bar_length = bar.length().unwrap() as f64;
+        let Pipeline { base, steps } = self;
+        let steps = steps.as_slice();
 
-        let mut base_counter = 0;
-        let mut base_iterator: Box<dyn Iterator<Item = (f64, f64, RegionMaskedSudoku)>> = Box::new(self.base.iter().map(move |(progress, scale, sudoku)| {
-            base_counter += 1;
-            if base_counter % PROGRESS_UPDATE_INTERVAL == 0 {
+        base.iter()
+            .map(move |(progress, _scale, sudoku)| {
                 bar.set_position((bar_length * progress).trunc() as u64);
+                sudoku
+            })
+            .par_bridge()
+            .for_each(|seed| {
+                for sudoku in apply_steps(seed, steps) {
+                    sink(sudoku.sudoku().clone());
+                }
+            });
+    }
+}
+
+fn apply_steps<'a>(seed: RegionMaskedSudoku, steps: &'a [PipelineStep]) -> Box<dyn Iterator<Item = RegionMaskedSudoku> + 'a> {
+    let mut iter: Box<dyn Iterator<Item = RegionMaskedSudoku> + 'a> = Box::new(std::iter::once(seed));
+    for step in steps {
+        match step {
+            PipelineStep::Filter(filter) => {
+                iter = Box::new(iter.filter(move |sudoku| filter.matches(sudoku)));
             }
-            (progress, scale, sudoku)
-        }));
-        for step in self.steps {
-            match step {
-                PipelineStep::Filter(mut filter) => {
-                    base_iterator = Box::new(base_iterator.filter(move |(_, _, sudoku)| filter.matches(sudoku)));
-                }
-                PipelineStep::Expansion(expansion) => {
-                    let expansion_counter = Rc::new(Cell::new(0));
-                    base_iterator = Box::new(base_iterator.flat_map(move |(progress, scale, sudoku)| {
-                        let expansion_counter = expansion_counter.clone();
-                        expansion.expand(sudoku).map(move |(subprogress, subscale, sudoku)| {
-                            let true_progress = progress - scale + subprogress * scale;
-                            expansion_counter.update(|count| count + 1);
-                            if expansion_counter.get() % PROGRESS_UPDATE_INTERVAL == 0 {
-                                bar.set_position((bar_length * true_progress).trunc() as u64);
-                            }
-                            (true_progress, scale * subscale, sudoku)
-                        })
-                    }))
-                }
+            PipelineStep::Expansion(expansion) => {
+                iter = Box::new(iter.flat_map(move |sudoku| expansion.expand(sudoku).map(|(_, _, sudoku)| sudoku)));
             }
         }
-        base_iterator.map(|(_, _, sudoku)| sudoku.sudoku().clone())
     }
+    iter
 }
 
 impl RegionMaskedSudoku {
