@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::rc::Rc;
 
 use indicatif::ProgressBar;
@@ -9,6 +9,7 @@ use crate::filter::Filter;
 use crate::generate::GenerationBase;
 use crate::sudoku::Sudoku;
 
+#[derive(Clone)]
 pub struct RegionMaskedSudoku {
     sudoku: Sudoku,
     rows: [Bitmask<u16>; 9],
@@ -28,27 +29,39 @@ pub struct Pipeline {
 
 impl Pipeline {
     pub fn into_iter(self, bar: &ProgressBar) -> impl Iterator<Item = Sudoku> + '_ {
-        let mut base_iterator: Box<dyn Iterator<Item = (f64, f64, Rc<RefCell<RegionMaskedSudoku>>)>> = Box::new(self.base.iter().map(|(progress, scale, sudoku)| {
-            bar.set_position(((bar.length().unwrap() as f64) * progress).trunc() as u64);
+        const PROGRESS_UPDATE_INTERVAL: u64 = 4096;
+        let bar_length = bar.length().unwrap() as f64;
+
+        let mut base_counter = 0;
+        let mut base_iterator: Box<dyn Iterator<Item = (f64, f64, RegionMaskedSudoku)>> = Box::new(self.base.iter().map(move |(progress, scale, sudoku)| {
+            base_counter += 1;
+            if base_counter % PROGRESS_UPDATE_INTERVAL == 0 {
+                bar.set_position((bar_length * progress).trunc() as u64);
+            }
             (progress, scale, sudoku)
         }));
         for step in self.steps {
             match step {
                 PipelineStep::Filter(mut filter) => {
-                    base_iterator = Box::new(base_iterator.filter(move |(_, _, sudoku)| filter.matches(&sudoku.borrow())));
+                    base_iterator = Box::new(base_iterator.filter(move |(_, _, sudoku)| filter.matches(sudoku)));
                 }
                 PipelineStep::Expansion(expansion) => {
-                    base_iterator = Box::new(base_iterator.flat_map(move |(progress, scale, sudoku)| 
+                    let expansion_counter = Rc::new(Cell::new(0));
+                    base_iterator = Box::new(base_iterator.flat_map(move |(progress, scale, sudoku)| {
+                        let expansion_counter = expansion_counter.clone();
                         expansion.expand(sudoku).map(move |(subprogress, subscale, sudoku)| {
                             let true_progress = progress - scale + subprogress * scale;
-                            bar.set_position(((bar.length().unwrap() as f64) * true_progress).trunc() as u64);
+                            expansion_counter.update(|count| count + 1);
+                            if expansion_counter.get() % PROGRESS_UPDATE_INTERVAL == 0 {
+                                bar.set_position((bar_length * true_progress).trunc() as u64);
+                            }
                             (true_progress, scale * subscale, sudoku)
                         })
-                    ))
+                    }))
                 }
             }
         }
-        base_iterator.map(|(_, _, sudoku)| sudoku.borrow().sudoku.clone())
+        base_iterator.map(|(_, _, sudoku)| sudoku.sudoku().clone())
     }
 }
 

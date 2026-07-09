@@ -1,21 +1,22 @@
 pub trait DepthFirstTraversable {
     type Step;
+    type Steps: ExactSizeIterator<Item = Self::Step>;
     type Output;
 
-    fn next_steps(&mut self) -> Box<dyn ExactSizeIterator<Item = Self::Step>>;
+    fn next_steps(&mut self) -> Self::Steps;
     fn apply_step(&mut self, step: &Self::Step);
     fn revert_step(&mut self, step: &Self::Step);
     fn should_prune(&mut self) -> bool;
     fn output(&mut self) -> Option<Self::Output>;
 }
 
-pub struct DepthFirstSearcherWithProgress<T, S> {
+pub struct DepthFirstSearcherWithProgress<T: DepthFirstTraversable> {
     state: T,
-    levels: Vec<(Box<dyn ExactSizeIterator<Item = S>>, Option<S>, f64)>,
+    levels: Vec<(T::Steps, Option<T::Step>, f64)>,
     progress: f64,
 }
 
-impl<T: DepthFirstTraversable> DepthFirstSearcherWithProgress<T, T::Step> {
+impl<T: DepthFirstTraversable> DepthFirstSearcherWithProgress<T> {
 
     /// A new search with the given state as the root
     pub fn new(start_state: T) -> Self {
@@ -50,7 +51,7 @@ impl<T: DepthFirstTraversable> DepthFirstSearcherWithProgress<T, T::Step> {
         }
 
         // Check if we should prune at this state and don't go deeper if so
-        if self.state.should_prune() { 
+        if self.state.should_prune() {
             self.progress += self.progress_increment();
             return true;
         }
@@ -73,7 +74,7 @@ impl<T: DepthFirstTraversable> DepthFirstSearcherWithProgress<T, T::Step> {
     }
 }
 
-impl<T: DepthFirstTraversable> Iterator for DepthFirstSearcherWithProgress<T, T::Step> {
+impl<T: DepthFirstTraversable> Iterator for DepthFirstSearcherWithProgress<T> {
     type Item = (f64, f64, T::Output);
 
     fn next(&mut self) -> Option<Self::Item> {
