@@ -23,27 +23,27 @@ mod template;
 
 fn main() {
     let bar = ProgressBar::new(100_000);
-    bar.set_style(ProgressStyle::with_template("[{elapsed_precise}] {bar:50} {percent_precise}%")
+    bar.set_style(ProgressStyle::with_template("[{elapsed_precise}] {bar:50} {percent_precise}% [{msg}]")
         .unwrap()
         .progress_chars("#~."));
     let template = Template::from_str(&"\
-        ..23.....\
-        .1..4....\
-        ...Y.....\
-        .76......\
-        8......B.\
-        9.....Y.B\
-        .....X..A\
-        .....X.A.\
-        ...XX....\
-    ".replace("A", "[12]").replace("B", "[34]").replace("X", "[56789]").replace("Y", "[123456789]"));
+        .........\
+        .A...4.A.\
+        3..5.6..Y\
+        ....1....\
+        ....2....\
+        ....3....\
+        Y..7.8..3\
+        .Y.9...Y.\
+        .........\
+    ".replace("A", "[12]").replace("Y", "[456789]"));
     let pipeline = Pipeline {
         base: GenerationBase::Template(template),
         steps: vec![
-            PipelineStep::Expansion(Expansion::plus_n(4, DihedralSubgroup::DiagonalUrToDlSymm, "r1c1,r2c1,r3c1,r4c1,r7c1,r8c1,r9c1,r1c6,r2c6,r3c6,r4c6,r5c6,r6c6,r9c6,r4c4,r4c5,r4c7,r4c8,r4c9,r9c2,r9c3,r9c7,r9c8,r9c9")),
+            PipelineStep::Expansion(Expansion::plus_n(6, DihedralSubgroup::CentralSymm, "r1c1,r1c2,r1c3,r1c4,r1c5,r1c6,r1c7,r1c8,r1c9,r2c1,r2c2,r2c3,r2c4,r2c5,r2c6,r2c7,r2c8,r2c9,r3c1,r3c2,r3c3,r3c4,r3c5,r3c6,r3c7,r3c8,r3c9,r7c1,r7c2,r7c3,r7c4,r7c5,r7c6,r7c7,r7c8,r7c9,r8c1,r8c2,r8c3,r8c4,r8c5,r8c6,r8c7,r8c8,r8c9,r9c1,r9c2,r9c3,r9c4,r9c5,r9c6,r9c7,r9c8,r9c9")),
             PipelineStep::Filter(Filter::HasUniqueSolution),
-            PipelineStep::Filter(Filter::at_most_n_basic_placements(0)),
-            PipelineStep::Filter(Filter::solves_with_basics_after_elims("56789r4c1,56789r4c6,56789r9c1,56789r9c6,1r7c3,1r8c3,2r7c2,2r8c2,3r5c5,3r6c5,4r5c4,4r6c4")),
+            PipelineStep::Filter(Filter::at_most_n_basic_placements(3)),
+            PipelineStep::Filter(Filter::solves_with_basics_after_elims("3r8c6")),
             PipelineStep::Filter(Filter::non_equivalent()),
         ],
     };

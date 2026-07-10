@@ -1,3 +1,6 @@
+use std::cell::Cell;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use indicatif::ProgressBar;
 use rayon::prelude::*;
 
@@ -34,33 +37,64 @@ impl Pipeline {
         let Pipeline { base, steps } = self;
         let steps = steps.as_slice();
 
+        const PROGRESS_SCALE: f64 = (1u64 << 52) as f64;
+        let progress = AtomicU64::new(0);
+        let report = |fraction: f64| {
+            if fraction <= 0.0 { return; }
+            let units = (fraction * PROGRESS_SCALE) as u64;
+            let total = progress.fetch_add(units, Ordering::Relaxed) + units;
+            bar.set_position(((total as f64 / PROGRESS_SCALE) * bar_length) as u64);
+        };
+
+        let found = AtomicU64::new(0);
+        bar.set_message("0 found");
+
+        let mut base_seen = 0.0f64;
         base.iter()
-            .map(move |(progress, _scale, sudoku)| {
-                bar.set_position((bar_length * progress).trunc() as u64);
-                sudoku
+            .map(move |(base_progress, base_scale, seed)| {
+                report(base_progress - base_scale - base_seen);
+                base_seen = base_progress;
+                (base_scale, seed)
             })
             .par_bridge()
-            .for_each(|seed| {
-                for sudoku in apply_steps(seed, steps) {
+            .for_each(|(base_scale, seed)| {
+                let reported = Cell::new(0.0f64);
+                for sudoku in apply_steps(seed, base_scale, steps, &report, &reported) {
                     sink(sudoku.sudoku().clone());
+                    bar.set_message(format!("{} found", found.fetch_add(1, Ordering::Relaxed) + 1));
                 }
+                report(base_scale * (1.0 - reported.get()));
             });
+
+        bar.set_message(format!("{} found", found.load(Ordering::Relaxed)));
     }
 }
 
-fn apply_steps<'a>(seed: RegionMaskedSudoku, steps: &'a [PipelineStep]) -> Box<dyn Iterator<Item = RegionMaskedSudoku> + 'a> {
-    let mut iter: Box<dyn Iterator<Item = RegionMaskedSudoku> + 'a> = Box::new(std::iter::once(seed));
+fn apply_steps<'a>(
+    seed: RegionMaskedSudoku,
+    seed_scale: f64,
+    steps: &'a [PipelineStep],
+    report: &'a (dyn Fn(f64) + Sync),
+    reported: &'a Cell<f64>,
+) -> Box<dyn Iterator<Item = RegionMaskedSudoku> + 'a> {
+    let mut iter: Box<dyn Iterator<Item = (f64, RegionMaskedSudoku)> + 'a> = Box::new(std::iter::once((seed_scale, seed)));
     for step in steps {
         match step {
             PipelineStep::Filter(filter) => {
-                iter = Box::new(iter.filter(move |sudoku| filter.matches(sudoku)));
+                iter = Box::new(iter.filter(move |(_, sudoku)| filter.matches(sudoku)));
             }
             PipelineStep::Expansion(expansion) => {
-                iter = Box::new(iter.flat_map(move |sudoku| expansion.expand(sudoku).map(|(_, _, sudoku)| sudoku)));
+                iter = Box::new(iter.flat_map(move |(scale, sudoku)| {
+                    expansion.expand(sudoku).map(move |(subprogress, subscale, sudoku)| {
+                        report(scale * (subprogress - reported.get()));
+                        reported.set(subprogress);
+                        (scale * subscale, sudoku)
+                    })
+                }));
             }
         }
     }
-    iter
+    Box::new(iter.map(|(_, sudoku)| sudoku))
 }
 
 impl RegionMaskedSudoku {
