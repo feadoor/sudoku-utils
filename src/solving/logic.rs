@@ -1,5 +1,5 @@
-use crate::bitmask::Bitmask;
-use crate::pipeline::RegionMaskedSudoku;
+use crate::generation::pipeline::RegionMaskedSudoku;
+use crate::utils::bitmask::Bitmask;
 
 /// Solver capable of performing basic logic:
 /// - Naked and Hidden Singles

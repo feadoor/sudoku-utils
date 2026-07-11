@@ -1,9 +1,9 @@
 use itertools::Itertools;
 
-use crate::bitmask::{BitIter, Bitmask};
-use crate::dfs_with_progress::{DepthFirstSearcherWithProgress, DepthFirstTraversable};
-use crate::pipeline::RegionMaskedSudoku;
-use crate::symmetry::DihedralSubgroup;
+use crate::generation::dfs_with_progress::{DepthFirstSearcherWithProgress, DepthFirstTraversable};
+use crate::generation::pipeline::RegionMaskedSudoku;
+use crate::symmetry::symmetry::DihedralSubgroup;
+use crate::utils::bitmask::{BitIter, Bitmask};
 
 pub enum Expansion {
     PlusN { n: usize, symmetry: DihedralSubgroup, excluded_cells: Vec<(usize, usize)> },

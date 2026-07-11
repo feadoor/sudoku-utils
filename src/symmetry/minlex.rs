@@ -1,6 +1,7 @@
 use itertools::Itertools;
 
-use crate::{sudoku::Sudoku, symmetry::{DigitMapper, Symmetry}};
+use crate::symmetry::symmetry::{DigitMapper, Symmetry};
+use crate::utils::sudoku::Sudoku;
 
 /// One of the 18 lines in a Sudoku.
 #[derive(Copy, Clone)]

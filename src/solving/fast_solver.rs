@@ -1,5 +1,5 @@
-use crate::bitmask::MaskIter;
-use crate::sudoku::Sudoku;
+use crate::utils::bitmask::MaskIter;
+use crate::utils::sudoku::Sudoku;
 
 const N_DIGITS: usize = 9;
 const N_BANDS: usize = 3;
@@ -69,6 +69,17 @@ impl FastBruteForceSolver {
 
     pub fn has_unique_solution(sudoku: &Sudoku) -> bool {
         Self::from_sudoku(sudoku).map(|s| s.count_solutions_up_to(2) == 1).unwrap_or(false)
+    }
+
+    pub fn is_minimal(sudoku: &Sudoku) -> bool {
+        if !Self::has_unique_solution(sudoku) { return false; }
+        let mut sudoku = sudoku.clone();
+        (0 .. 81).all(|idx| sudoku[idx] == 0 || {
+            let d = sudoku[idx]; sudoku[idx] = 0;
+            if Self::has_unique_solution(&sudoku) { return false; }
+            sudoku[idx] = d;
+            true
+        })
     }
 
     pub fn count_solutions(sudoku: &Sudoku) -> usize {

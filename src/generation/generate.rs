@@ -1,7 +1,7 @@
-use crate::bitmask::{BitIter, Bitmask};
-use crate::dfs_with_progress::{DepthFirstSearcherWithProgress, DepthFirstTraversable};
-use crate::pipeline::RegionMaskedSudoku;
-use crate::template::{Template, TemplateDigit};
+use crate::generation::dfs_with_progress::{DepthFirstSearcherWithProgress, DepthFirstTraversable};
+use crate::generation::pipeline::RegionMaskedSudoku;
+use crate::generation::template::{Template, TemplateDigit};
+use crate::utils::bitmask::{BitIter, Bitmask};
 
 pub enum GenerationBase {
     Template(Template),

@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use crate::fast_solver::FastBruteForceSolver;
-use crate::logic::BasicSolver;
-use crate::minlex::minlex;
-use crate::pipeline::RegionMaskedSudoku;
-use crate::sudoku::Sudoku;
+use crate::generation::pipeline::RegionMaskedSudoku;
+use crate::solving::fast_solver::FastBruteForceSolver;
+use crate::solving::logic::BasicSolver;
+use crate::symmetry::minlex::minlex;
+use crate::utils::sudoku::Sudoku;
 
 pub enum Filter {
     AtMostNBasicPlacements { n: usize },

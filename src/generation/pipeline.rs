@@ -4,11 +4,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use indicatif::ProgressBar;
 use rayon::prelude::*;
 
-use crate::bitmask::Bitmask;
-use crate::expansion::Expansion;
-use crate::filter::Filter;
-use crate::generate::GenerationBase;
-use crate::sudoku::Sudoku;
+use crate::generation::expansion::Expansion;
+use crate::generation::filter::Filter;
+use crate::generation::generate::GenerationBase;
+use crate::utils::bitmask::Bitmask;
+use crate::utils::sudoku::Sudoku;
 
 #[derive(Clone)]
 pub struct RegionMaskedSudoku {

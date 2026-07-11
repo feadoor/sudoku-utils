@@ -1,5 +1,6 @@
-use crate::sudoku::Sudoku;
 use itertools::Itertools;
+
+use crate::utils::sudoku::Sudoku;
 
 /// A representation of a geometric symmetry of a Sudoku, which consists
 /// of a permutation for rows, a permutation for columns, and an indication
