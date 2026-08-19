@@ -10,28 +10,17 @@ const NONE: u32 = 0;
 const ALL: u32 = 0o_777_777_777;
 const LOW9: u32 = 0o_777;
 
-pub struct Unsolvable {}
+/// A sentinel signalling that a  partial grid cannot be completed.
+struct Contradiction;
 
-/// Different ways of storing solutions - we can either:
-/// - just count (faster)
-/// - keep all the solutions (slower)
-enum Solutions<'a> {
-    Count(usize),
-    Keep(&'a mut Vec<Sudoku>),
+enum Status {
+    Contradiction,
+    Solved,
+    Stuck,
 }
 
-impl<'a> Solutions<'a> {
-
-    fn len(&self) -> usize {
-        match self {
-            Solutions::Count(value) => *value,
-            Solutions::Keep(sols) => sols.len(),
-        }
-    }
-}
-
-/// A helper type for unchecked indexing into arrays, which speeds up 
-/// the solver by up to 10% on the hardest puzzles.
+/// A helper type for unchecked indexing into arrays, which speeds up the solver
+/// by up to 10% on the hardest puzzles.
 #[derive(Clone)]
 struct UncheckedIndexArray<T, const N: usize>([T; N]);
 
@@ -48,27 +37,33 @@ impl<T, const N: usize> std::ops::IndexMut<usize> for UncheckedIndexArray<T, N> 
     }
 }
 
-/// Implementation is band-oriented
-/// Each entry in one of these arrays is a 27-bit bitmask of possible positions within a horizontal band
+/// A single node in the search, using a band-oriented data representation.
 ///
-/// possible_cells and prev_possible_cells contain one bitmask per digit per band
-/// unsolved_cells and bivalue_cells contain one bitmask per band
+/// `possible[digit * 3 + band]`: a 27-bit mask of the cells within `band` which can hold `digit`
+/// `unsolved[band]`: cells within the band not yet holding a value
+/// `bivalue[band]`: cells within the band which have exactly two candidates
+/// `prev_possible`: snapshots `possible` after the last locked-candidate sweep so subsequent sweeps
+/// can skip subbands that have not changed since the previous one
 #[derive(Clone)]
 pub struct FastBruteForceSolver {
-    possible_cells: UncheckedIndexArray<u32, N_SUBBANDS>,
-    prev_possible_cells: UncheckedIndexArray<u32, N_SUBBANDS>,
-    unsolved_cells: UncheckedIndexArray<u32, N_BANDS>,
-    bivalue_cells: UncheckedIndexArray<u32, N_BANDS>,
+    possible: UncheckedIndexArray<u32, N_SUBBANDS>,
+    prev_possible: UncheckedIndexArray<u32, N_SUBBANDS>,
+    unsolved: UncheckedIndexArray<u32, N_BANDS>,
+    bivalue: UncheckedIndexArray<u32, N_BANDS>,
 }
 
 impl FastBruteForceSolver {
 
     pub fn has_solution(sudoku: &Sudoku) -> bool {
-        Self::from_sudoku(sudoku).map(|s| s.count_solutions_up_to(1) == 1).unwrap_or(false)
+        Self::count_up_to(sudoku, 1) == 1
     }
 
     pub fn has_unique_solution(sudoku: &Sudoku) -> bool {
-        Self::from_sudoku(sudoku).map(|s| s.count_solutions_up_to(2) == 1).unwrap_or(false)
+        Self::count_up_to(sudoku, 2) == 1
+    }
+
+    pub fn count_solutions(sudoku: &Sudoku) -> usize {
+        Self::count_up_to(sudoku, usize::MAX)
     }
 
     pub fn is_minimal(sudoku: &Sudoku) -> bool {
@@ -77,368 +72,271 @@ impl FastBruteForceSolver {
         (0 .. 81).all(|idx| sudoku[idx] == 0 || {
             let d = sudoku[idx]; sudoku[idx] = 0;
             if Self::has_unique_solution(&sudoku) { return false; }
-            sudoku[idx] = d;
-            true
+            sudoku[idx] = d; true
         })
     }
 
-    pub fn count_solutions(sudoku: &Sudoku) -> usize {
-        Self::from_sudoku(sudoku).map(|s| s.count_solutions_up_to(usize::MAX)).unwrap_or(0)
+    pub fn count_up_to(sudoku: &Sudoku, limit: usize) -> usize {
+        match Self::from_sudoku(sudoku) {
+            Some(mut solver) => {
+                let mut count = 0;
+                solver.search(limit, &mut count);
+                count
+            }
+            None => 0,
+        }
     }
 
-    fn from_sudoku(sudoku: &Sudoku) -> Result<Self, Unsolvable> {
-        let mut solver = Self {
-            possible_cells: UncheckedIndexArray([ALL; N_SUBBANDS]),
-            prev_possible_cells: UncheckedIndexArray([NONE; N_SUBBANDS]),
-            unsolved_cells: UncheckedIndexArray([ALL; N_BANDS]),
-            bivalue_cells: UncheckedIndexArray([NONE; N_BANDS]),
-        };
-        
-        for (cell, value) in sudoku.digits().enumerate() {
-            if *value != 0 {
-                solver.insert_value(cell, *value)?
+    fn search(&mut self, limit: usize, count: &mut usize) {
+        match self.propagate() {
+            Status::Contradiction => {}
+            Status::Solved => *count += 1,
+            Status::Stuck => {
+                let (band, cell_mask) = self.choose_branch_cell();
+
+                // Find the candidates that can still occupy this cell.
+                let mut candidates = [0usize; N_DIGITS];
+                let mut n = 0;
+                for subband in (band..).step_by(N_BANDS).take(N_DIGITS) {
+                    if self.possible[subband] & cell_mask != NONE {
+                        candidates[n] = subband;
+                        n += 1;
+                    }
+                }
+
+                // Try every candidate but the last on a fresh clone and reuse `self` in place
+                // for the final candidate, so a k-candidate cell costs only k - 1 clones.
+                for &subband in candidates[..n.saturating_sub(1)].iter() {
+                    if *count >= limit {
+                        return;
+                    }
+                    let mut child = self.clone();
+                    child.assign(subband, cell_mask);
+                    child.search(limit, count);
+                }
+                if n > 0 && *count < limit {
+                    self.assign(candidates[n - 1], cell_mask);
+                    self.search(limit, count);
+                }
             }
         }
-
-        Ok(solver)
     }
 
-    fn all_solutions_up_to(self, limit: usize) -> Vec<Sudoku> {
-        let mut solutions = Vec::new();
-        self.solutions_up_to(limit, &mut Solutions::Keep(&mut solutions));
-        solutions
+    fn propagate(&mut self) -> Status {
+        match self.run_deductions() {
+            Err(Contradiction) => Status::Contradiction,
+            Ok(()) if self.is_solved() => Status::Solved,
+            Ok(()) => Status::Stuck,
+        }
     }
 
-    fn count_solutions_up_to(self, limit: usize) -> usize {
-        let mut solutions = Solutions::Count(0);
-        self.solutions_up_to(limit, &mut solutions);
-        solutions.len()
-    }
-
-    fn solutions_up_to(mut self, limit: usize, solutions: &mut Solutions) {
-        if self.find_naked_singles().is_ok() {
-            if self.solve(limit, solutions).is_ok() {
-                self.guess(limit, solutions);
+    fn run_deductions(&mut self) -> Result<(), Contradiction> {
+        loop {
+            self.eliminate_locked_candidates()?;
+            if self.is_solved() {
+                return Ok(());
+            }
+            if !self.assign_naked_singles()? {
+                return Ok(());
             }
         }
     }
 
     fn is_solved(&self) -> bool {
-        self.unsolved_cells.0 == [NONE; N_BANDS]
+        self.unsolved.0 == [NONE; N_BANDS]
     }
 
-    /// Repeatedly use singles and locked candidates until no more deductions
-    /// are possible.
-    fn solve(&mut self, limit: usize, solutions: &mut Solutions) -> Result<(), Unsolvable> {
-
-        // Force a recursion stop if we're at the solution limit
-        if solutions.len() >= limit {
-            return Err(Unsolvable {});
-        }
-
-        loop {
-            self.find_locked_candidates_and_update()?;
-            if self.is_solved() { return Ok(()); }
-            if self.find_naked_singles()? { continue; }
-            return Ok(());
-        }
-    }
-
-    // If the puzzle is not solved, choose an unsolved cell and branch on it
-    fn guess(&mut self, limit: usize, solutions: &mut Solutions) {
-        if self.is_solved() {
-            self.store_solution(solutions);
-        } else if self.guess_bivalue(limit, solutions).is_ok() {
-            self.guess_some_cell(limit, solutions);
-        }
-    }
-
-    // Look for a bivalue cell to guess on and branch on it. We save these
-    // cells while checking for naked singles, so this is basically a lookup.
-    fn guess_bivalue(&mut self, limit: usize, solutions: &mut Solutions) -> Result<(), Unsolvable> {
-        for band in 0 .. N_BANDS {
-
-            // Get the first bivalue cell, if it exists
-            let cell_mask = match MaskIter::<u32>::from(self.bivalue_cells[band]).peek() {
-                Some(mask) => mask,
-                None => continue,
-            };
-            
-            // Loop through all 9 digits and check if that digit is possible here
-            let mut first = true;
-            for subband in (band..).step_by(3) {
-                if self.possible_cells[subband] & cell_mask != NONE {
-                    if first { first = false;
-                        let mut branch = self.clone();
-                        branch.insert_value_by_mask(subband, cell_mask);
-                        if branch.solve(limit, solutions).is_ok() {
-                            branch.guess(limit, solutions);
-                        }
-                    } else {
-                        self.insert_value_by_mask(subband, cell_mask);
-                        if self.solve(limit, solutions).is_ok() {
-                            self.guess(limit, solutions);
-                        }
-                        return Err(Unsolvable {});
-                    }
-                }
+    /// Choose a cell to branch on. If there are any bivalue cells, which is almost always the case
+    /// and which are found as a side effect of the propagation step, choose one of them.
+    /// Otherwise, finding a cell with as few candidates as possible is valuable but an exhaustive
+    /// scan is too expensive, so examine the first unsolved cell in each band and take the one with
+    /// the fewest candidates.
+    fn choose_branch_cell(&self) -> (usize, u32) {
+        for band in 0..N_BANDS {
+            if let Some(cell_mask) = MaskIter::<u32>::from(self.bivalue[band]).peek() {
+                return (band, cell_mask);
             }
         }
+
+        (0..N_BANDS)
+            .filter_map(|band| {
+                let cell_mask = MaskIter::<u32>::from(self.unsolved[band]).peek()?;
+                let candidates = (band..)
+                    .step_by(N_BANDS)
+                    .take(N_DIGITS)
+                    .filter(|&subband| self.possible[subband] & cell_mask != NONE)
+                    .count();
+                Some((candidates, band, cell_mask))
+            })
+            .min()
+            .map(|(_, band, cell_mask)| (band, cell_mask))
+            .expect("a stuck grid always has an unsolved cell")
+    }
+
+    fn from_sudoku(sudoku: &Sudoku) -> Option<Self> {
+        let mut solver = Self {
+            possible: UncheckedIndexArray([ALL; N_SUBBANDS]),
+            prev_possible: UncheckedIndexArray([NONE; N_SUBBANDS]),
+            unsolved: UncheckedIndexArray([ALL; N_BANDS]),
+            bivalue: UncheckedIndexArray([NONE; N_BANDS]),
+        };
+
+        for (cell, &value) in sudoku.digits().enumerate() {
+            if value != 0 {
+                solver.insert_value(cell, value).ok()?;
+            }
+        }
+
+        Some(solver)
+    }
+
+    /// Insert a given clue, clearing candidates from the same row and box, from
+    /// neighbouring bands column-wise and from other digits in this cell. Only used
+    /// during initial grid construction.
+    fn insert_value(&mut self, cell: usize, value: u8) -> Result<(), Contradiction> {
+        let band = cell / 27;
+        let subband = (value as usize - 1) * N_BANDS + band;
+        let cell_mask = 1 << (cell % 27);
+
+        if self.possible[subband] & cell_mask == NONE {
+            return Err(Contradiction);
+        }
+
+        self.unsolved[band] &= !cell_mask;
+
+        self.possible[subband] &= nonconflicting_cells_same_band(cell);
+        let nonconflicting_neighbours = nonconflicting_cells_neighbour_bands(cell);
+        let (neighbour1, neighbour2) = neighbour_subbands(subband);
+        self.possible[neighbour1] &= nonconflicting_neighbours;
+        self.possible[neighbour2] &= nonconflicting_neighbours;
+
+        for digit_subband in (band..).step_by(N_BANDS).take(N_DIGITS) {
+            self.possible[digit_subband] &= !cell_mask;
+        }
+        self.possible[subband] |= cell_mask;
 
         Ok(())
     }
 
-    /// Find an unsolved cell and branch on it.
-    /// In the vast majority of cases, there is a cell with only 2 candidates,
-    /// which means that guess_bivalue() will be called instead of this function.
-    /// In cases where there is no bivalue cell it is valuable to find a cell with
-    /// few candidates, but an exhaustive search is too expensive.
-    /// As a compromise, up to 3 cells are searched and the one with the fewest
-    /// candidates is used as the branching point.
-    fn guess_some_cell(&mut self, limit: usize, solutions: &mut Solutions) {
-        let best_guess = (0 .. N_BANDS).flat_map(|band| {
-            // Get first unsolved cell, if it exists
-            let one_unsolved_cell = MaskIter::<u32>::from(self.unsolved_cells[band]).peek()?;
-            let n_candidates = (band..).step_by(3).take(N_DIGITS)
-                .filter(|&subband| self.possible_cells[subband] & one_unsolved_cell != NONE)
-                .count();
-            Some((n_candidates, band, one_unsolved_cell))
-        }).min();
-
-        let (count, band, unsolved_cell) = match best_guess {
-            Some(min) => min,
-            None => return,
-        };
-
-        // Check every digit
-        let mut checked = 0;
-        for subband in (band..).step_by(3) {
-            if self.possible_cells[subband] & unsolved_cell != NONE {
-                if checked < count - 1 { checked += 1;
-                    let mut branch = self.clone();
-                    branch.insert_value_by_mask(subband, unsolved_cell);
-                    if branch.solve(limit, solutions).is_ok() {
-                        branch.guess(limit, solutions);
-                    }
-                } else {
-                    self.insert_value_by_mask(subband, unsolved_cell);
-                    if self.solve(limit, solutions).is_ok() {
-                        self.guess(limit, solutions);
-                    }
-                    return;
-                }
-            }
-        }
+    /// Place a digit at the cell given by `cell_mask` within `subband`, clearing
+    /// it from the rest of that row and box. Does not clear the column or the cell's
+    /// other digits; this is handled by the next locked-candidate sweep.
+    fn assign(&mut self, subband: usize, cell_mask: u32) {
+        let cell = cell_mask.trailing_zeros() as usize;
+        self.possible[subband] &= nonconflicting_cells_same_band(cell);
     }
 
-    /// Store the current solution
-    fn store_solution(&self, solutions: &mut Solutions) {
-        match solutions {
-            Solutions::Count(count) => *count += 1,
-            Solutions::Keep(sols) => sols.push(self.extract_solution()),
-        }
-    }
-
-    /// Extract the solution as a Sudoku from the current solver state
-    fn extract_solution(&self) -> Sudoku {
-        let mut sudoku = [0; 81];
-        for (subband, &mask) in self.possible_cells.0.iter().enumerate() {
-            let digit = subband / 3;
-            let base_cell_in_band = subband % 3 * 27;
-            for cell_mask in MaskIter::<u32>::from(mask) {
-                let cell_in_band = cell_mask.trailing_zeros() as usize;
-                sudoku[cell_in_band + base_cell_in_band] = digit as u8 + 1;
-            }
-        }
-        Sudoku(sudoku)
-    }
-
-    /// Search for cells which only have one candidate and sets them.
-    /// Also finds cells with 0 possibilities (puzzle is unsolvable), cells with
-    /// 2 possibilities (good guess locations) and cells with 3 or more (bad guess locations)
-    fn find_naked_singles(&mut self) -> Result<bool, Unsolvable> {
-        
-        let mut naked_single_applied = false;
-        for band in 0 .. N_BANDS {
-            
-            // Masks of cells with >= 1, >= 2 and >= 3 candidates
+    /// Find cells with a single candidate and place them. Also records, per
+    /// band, which cells have exactly two candidates and detects cells with zero
+    /// candidates. Returns whether any single was placed.
+    fn assign_naked_singles(&mut self) -> Result<bool, Contradiction> {
+        let mut placed_any = false;
+        for band in 0..N_BANDS {
+            // Masks of cells (in this band) with >=1, >=2 and >=3 candidates.
             let (mut cells1, mut cells2, mut cells3) = (NONE, NONE, NONE);
-            for subband in (band ..).step_by(3).take(N_DIGITS) {
-                let band_mask = self.possible_cells[subband];
+            for subband in (band..).step_by(N_BANDS).take(N_DIGITS) {
+                let band_mask = self.possible[subband];
                 cells3 |= cells2 & band_mask;
                 cells2 |= cells1 & band_mask;
                 cells1 |= band_mask;
             }
 
+            // Every cell must have at least one candidate.
             if cells1 != ALL {
-                return Err(Unsolvable {});
+                return Err(Contradiction);
             }
 
-            // Store bivalue cells
-            self.bivalue_cells[band] = cells2 ^ cells3;
+            // Cells with exactly two candidates.
+            self.bivalue[band] = cells2 ^ cells3;
 
-            // New singles, ignore previously solved ones
-            let singles = (cells1 ^ cells2) & self.unsolved_cells[band];
+            // New singles: exactly one candidate, not already solved.
+            let singles = (cells1 ^ cells2) & self.unsolved[band];
 
-            // Insert each of the new singles
-            'insert: for cell_mask_single in MaskIter::<u32>::from(singles) {
+            'insert: for cell_mask in MaskIter::<u32>::from(singles) {
+                placed_any = true;
 
-                // Mark that we've applied a naked single
-                naked_single_applied = true;
-
-                // Find the digit that can go in this single cell
-                for digit in 0 .. N_DIGITS {
-                    if self.possible_cells[digit * 3 + band] & cell_mask_single != NONE {
-                        self.insert_value_by_mask(digit * 3 + band, cell_mask_single);
+                // Find and place the one digit that fits here.
+                for digit in 0..N_DIGITS {
+                    if self.possible[digit * N_BANDS + band] & cell_mask != NONE {
+                        self.assign(digit * N_BANDS + band, cell_mask);
                         continue 'insert;
                     }
                 }
 
-                // If we get here, it's a forced empty cell
-                return Err(Unsolvable {});
+                // No digit fits: the cell is forced empty.
+                return Err(Contradiction);
             }
         }
 
-        Ok(naked_single_applied)
+        Ok(placed_any)
     }
 
-    /// Search for minirows that must contain a particular digit because they are the
-    /// only minirow in a row or block that still contains that candidate and remove
-    /// those candidates from conflicting cells.
-    ///
-    /// Also updates the bitmasks to remove impossible candidates left behind by
-    /// calling insert_value_by_mask.
-    fn find_locked_candidates_and_update(&mut self) -> Result<(), Unsolvable> {
+    /// Apply locked-candidate eliminations across every subband that has
+    /// changed since the last sweep, repeating until there are no further
+    /// changes. The unrolled loop runs faster than a loop over (0 .. 27).
+    fn eliminate_locked_candidates(&mut self) -> Result<(), Contradiction> {
+        macro_rules! sweep {
+            ($found:ident; $($subband:literal)*) => {$(
+                if self.possible[$subband] != self.prev_possible[$subband] {
+                    $found = true;
+                    self.eliminate_locked_candidates_subband($subband)?;
+                }
+            )*};
+        }
 
         loop {
-            // Repeat until nothing can be found or updated any more
-            // This is the hottest piece of code in the solver
-            let mut found_nothing = true;
-
-            // This loop runs faster unrolled
-            if self.possible_cells[0] != self.prev_possible_cells[0] { found_nothing = false; self.find_locked_candidates_and_update_subband(0)?; }
-            if self.possible_cells[1] != self.prev_possible_cells[1] { found_nothing = false; self.find_locked_candidates_and_update_subband(1)?; }
-            if self.possible_cells[2] != self.prev_possible_cells[2] { found_nothing = false; self.find_locked_candidates_and_update_subband(2)?; }
-            if self.possible_cells[3] != self.prev_possible_cells[3] { found_nothing = false; self.find_locked_candidates_and_update_subband(3)?; }
-            if self.possible_cells[4] != self.prev_possible_cells[4] { found_nothing = false; self.find_locked_candidates_and_update_subband(4)?; }
-            if self.possible_cells[5] != self.prev_possible_cells[5] { found_nothing = false; self.find_locked_candidates_and_update_subband(5)?; }
-            if self.possible_cells[6] != self.prev_possible_cells[6] { found_nothing = false; self.find_locked_candidates_and_update_subband(6)?; }
-            if self.possible_cells[7] != self.prev_possible_cells[7] { found_nothing = false; self.find_locked_candidates_and_update_subband(7)?; }
-            if self.possible_cells[8] != self.prev_possible_cells[8] { found_nothing = false; self.find_locked_candidates_and_update_subband(8)?; }
-            if self.possible_cells[9] != self.prev_possible_cells[9] { found_nothing = false; self.find_locked_candidates_and_update_subband(9)?; }
-            if self.possible_cells[10] != self.prev_possible_cells[10] { found_nothing = false; self.find_locked_candidates_and_update_subband(10)?; }
-            if self.possible_cells[11] != self.prev_possible_cells[11] { found_nothing = false; self.find_locked_candidates_and_update_subband(11)?; }
-            if self.possible_cells[12] != self.prev_possible_cells[12] { found_nothing = false; self.find_locked_candidates_and_update_subband(12)?; }
-            if self.possible_cells[13] != self.prev_possible_cells[13] { found_nothing = false; self.find_locked_candidates_and_update_subband(13)?; }
-            if self.possible_cells[14] != self.prev_possible_cells[14] { found_nothing = false; self.find_locked_candidates_and_update_subband(14)?; }
-            if self.possible_cells[15] != self.prev_possible_cells[15] { found_nothing = false; self.find_locked_candidates_and_update_subband(15)?; }
-            if self.possible_cells[16] != self.prev_possible_cells[16] { found_nothing = false; self.find_locked_candidates_and_update_subband(16)?; }
-            if self.possible_cells[17] != self.prev_possible_cells[17] { found_nothing = false; self.find_locked_candidates_and_update_subband(17)?; }
-            if self.possible_cells[18] != self.prev_possible_cells[18] { found_nothing = false; self.find_locked_candidates_and_update_subband(18)?; }
-            if self.possible_cells[19] != self.prev_possible_cells[19] { found_nothing = false; self.find_locked_candidates_and_update_subband(19)?; }
-            if self.possible_cells[20] != self.prev_possible_cells[20] { found_nothing = false; self.find_locked_candidates_and_update_subband(20)?; }
-            if self.possible_cells[21] != self.prev_possible_cells[21] { found_nothing = false; self.find_locked_candidates_and_update_subband(21)?; }
-            if self.possible_cells[22] != self.prev_possible_cells[22] { found_nothing = false; self.find_locked_candidates_and_update_subband(22)?; }
-            if self.possible_cells[23] != self.prev_possible_cells[23] { found_nothing = false; self.find_locked_candidates_and_update_subband(23)?; }
-            if self.possible_cells[24] != self.prev_possible_cells[24] { found_nothing = false; self.find_locked_candidates_and_update_subband(24)?; }
-            if self.possible_cells[25] != self.prev_possible_cells[25] { found_nothing = false; self.find_locked_candidates_and_update_subband(25)?; }
-            if self.possible_cells[26] != self.prev_possible_cells[26] { found_nothing = false; self.find_locked_candidates_and_update_subband(26)?; }
-
-            if found_nothing { return Ok(()); }
+            let mut found_something = false;
+            sweep!(found_something; 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26);
+            if !found_something {
+                return Ok(());
+            }
         }
     }
 
-    /// Update locked candidates for a single subband
+    /// Locked-candidate processing for one subband: find pointing/claiming
+    /// candidates within the band, propagate the resulting column constraints to
+    /// the neighbouring bands, and mark any cells that become solved.
     #[inline(always)]
-    fn find_locked_candidates_and_update_subband(&mut self, subband: usize) -> Result<(), Unsolvable> {
-        let old_possible_cells = self.possible_cells[subband];
+    fn eliminate_locked_candidates_subband(&mut self, subband: usize) -> Result<(), Contradiction> {
+        let old_possible_cells = self.possible[subband];
 
-        // Find all locked candidates in the band, both pointing and claiming.
-        // First, use a lookup to condense each row of 9 bits down to 3 bits, 1 for each minirow.
-        // Save the results for the 3 rows in a band together in a 9-bit mask and use another
-        // lookup to find impossible candidates.
+        // Condense each row of 9 bits to 3 (one bit per minirow) with a lookup,
+        // pack the band's three rows into a 9-bit key, and look up the cells
+        // that survive locked-candidate elimination within the band.
         let shrink = shrink_mask(old_possible_cells & LOW9)
             | shrink_mask(old_possible_cells >> 9 & LOW9) << 3
             | shrink_mask(old_possible_cells >> 18) << 6;
         let possible_cells = old_possible_cells & nonconflicting_cells_same_band_by_locked_candidates(shrink);
 
-        // Check for impossibility and then update the possible cells for this subband
-        if possible_cells == NONE { return Err(Unsolvable {}); }
-        self.prev_possible_cells[subband] = possible_cells;
-        self.possible_cells[subband] = possible_cells;
+        if possible_cells == NONE {
+            return Err(Contradiction);
+        }
+        self.prev_possible[subband] = possible_cells;
+        self.possible[subband] = possible_cells;
 
-        // Possible columns in subband, including already solved ones
+        // Columns (within the band) that still hold this digit, solved or not.
         let possible_columns = (possible_cells | possible_cells >> 9 | possible_cells >> 18) & LOW9;
 
-        // Check for locked candidates in the columns (pointing type)
-        // This is also what's enforcing that a column cannot contain a digit
-        // more than once, since that is ignored by insert_value_by_mask
+        // Propagate column constraints to the two neighbouring bands. This is
+        // also what forbids a digit appearing twice in a column, since `assign`
+        // ignores columns.
         let nonconflicting_neighbours = nonconflicting_cells_neighbour_bands_by_locked_candidates(possible_columns);
         let (neighbour1, neighbour2) = neighbour_subbands(subband);
-        self.possible_cells[neighbour1] &= nonconflicting_neighbours;
-        self.possible_cells[neighbour2] &= nonconflicting_neighbours;
+        self.possible[neighbour1] &= nonconflicting_neighbours;
+        self.possible[neighbour2] &= nonconflicting_neighbours;
 
-        // Minirows that are locked have no neighbouring minirows in the same row
-        // or in the same box. If they are inside a box where only 1 column is
-        // possible, then only 1 cell is possible and the value is placed in the
-        // row.
-        //
-        // `solved_rows` is a 3-bit mask of the rows in the subband
-        // Mapping from solved minirows to solved rows happens to need the
-        // same mask as shrinking for locked candidates.
+        // A minirow locked to a single column places the digit in that cell.
         let locked_candidates_intersection = locked_minirows(shrink) & column_single(possible_columns);
         let solved_rows = shrink_mask(locked_candidates_intersection);
         let solved_cells = row_mask(solved_rows) & possible_cells;
 
-        // Delete candidates of other digits from all solved cells in current subband
-        let band = subband % 3;
+        // Remove every other digit from the cells solved above.
+        let band = subband % N_BANDS;
         let nonconflicting_cells = !solved_cells;
-        self.unsolved_cells[band] &= nonconflicting_cells;
-        for other_subband in (band..).step_by(3).take(N_DIGITS).filter(|&other| other != subband) {
-            self.possible_cells[other_subband] &= nonconflicting_cells;
+        self.unsolved[band] &= nonconflicting_cells;
+        for other in (band..).step_by(N_BANDS).take(N_DIGITS).filter(|&other| other != subband) {
+            self.possible[other] &= nonconflicting_cells;
         }
-
-        Ok(())
-    }
-
-
-    /// Insert a value given a subband index and a mask representing the cell it
-    /// goes in. Clears candidates from other cells in the same row and box but
-    /// does not clear from other cells in the same column, as this is not cheap
-    /// in our board representation and will happen later when finding locked
-    /// candidates.
-    fn insert_value_by_mask(&mut self, subband: usize, mask: u32) {
-        let cell = mask.trailing_zeros() as usize;
-        self.possible_cells[subband] &= nonconflicting_cells_same_band(cell);
-    }
-
-    /// Insert starting values and clear candidates. Only used when initialising
-    /// the solver from a given puzzle.
-    fn insert_value(&mut self, cell: usize, value: u8) -> Result<(), Unsolvable> {
-        let band = cell / 27;
-        let subband = (value as usize - 1) * 3 + band;
-        let cell_mask = 1 << (cell % 27);
-
-        // Check if this digit is allowed in this position
-        if self.possible_cells[subband] & cell_mask == NONE {
-            return Err(Unsolvable {});
-        }
-
-        // Set the cell containing this digit to solved
-        self.unsolved_cells[band] &= !cell_mask;
-
-        // Remove the digit as a possibility from cell neighbours by row, column and box
-        self.possible_cells[subband] &= nonconflicting_cells_same_band(cell);
-        let nonconflicting_neighbours = nonconflicting_cells_neighbour_bands(cell);
-        let (neighbour1, neighbour2) = neighbour_subbands(subband);
-        self.possible_cells[neighbour1] &= nonconflicting_neighbours;
-        self.possible_cells[neighbour2] &= nonconflicting_neighbours;
-
-        // Remove other digits as a possibility from the same cell
-        for digit_subband in (band ..).step_by(3).take(N_DIGITS) {
-            self.possible_cells[digit_subband] &= !cell_mask;
-        }
-        self.possible_cells[subband] |= cell_mask;
 
         Ok(())
     }
