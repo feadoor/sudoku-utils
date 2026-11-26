@@ -2,6 +2,7 @@
 name = "sudoku-utils"
 version = "0.1.0"
 edition = "2021"
+license = "0BSD"
 
 [dependencies]
 indicatif = "0.18.3"
