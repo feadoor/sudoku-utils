@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use crate::generation::pipeline::RegionMaskedSudoku;
-use crate::solving::fast_solver::FastBruteForceSolver;
+use crate::solving::band_sweep::BandSweepSolver;
 use crate::solving::logic::BasicSolver;
 use crate::symmetry::minlex::minlex;
 use crate::utils::sudoku::Sudoku;
@@ -20,8 +20,8 @@ impl Filter {
         match self {
             Self::AtMostNBasicPlacements { n } => at_most_n_basic_placements(*n, sudoku),
             Self::SolvesWithBasicsAfterElims { elims } => solves_with_basics_after_elims(elims, sudoku),
-            Self::HasAnySolution => FastBruteForceSolver::has_solution(sudoku.sudoku()),
-            Self::HasUniqueSolution => FastBruteForceSolver::has_unique_solution(sudoku.sudoku()),
+            Self::HasAnySolution => BandSweepSolver::has_solution(sudoku.sudoku()),
+            Self::HasUniqueSolution => BandSweepSolver::has_unique_solution(sudoku.sudoku()),
             Self::NonEquivalent { seen_minlexes } => non_equivalent(sudoku.sudoku(), seen_minlexes),
         }
     }

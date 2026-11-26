@@ -3,7 +3,7 @@ use rand::Rng;
 
 use crate::sampling::grid_sampler::sample_solved_grid;
 use crate::sampling::mask_sampler::MaskSampler;
-use crate::solving::fast_solver::FastBruteForceSolver;
+use crate::solving::band_sweep::BandSweepSolver;
 use crate::utils::bitmask::Bitmask;
 use crate::utils::sudoku::Sudoku;
 
@@ -76,7 +76,7 @@ impl PuzzleSampler {
 
     fn attempt(&self, rng: &mut impl Rng) -> Option<Sudoku> {
         let clues = self.generate_clues(rng);
-        if FastBruteForceSolver::has_unique_solution(&clues) {
+        if BandSweepSolver::has_unique_solution(&clues) {
             Some(clues)
         } else {
             None
@@ -85,7 +85,7 @@ impl PuzzleSampler {
 
     fn attempt_minimal(&self, rng: &mut impl Rng) -> Option<Sudoku> {
         let clues = self.generate_clues(rng);
-        if FastBruteForceSolver::is_minimal(&clues) {
+        if BandSweepSolver::is_minimal(&clues) {
             Some(clues)
         } else {
             None

@@ -53,7 +53,7 @@ fn example_generation() {
 fn example_sampling() {
     let min_clues = 24;
     let max_clues = 28;
-    let n_puzzles = 1_000;
+    let n_puzzles = 1_000_000;
     let sampler = PuzzleSampler::new(min_clues, max_clues);
 
     let out = std::sync::Mutex::new(std::io::stdout());
@@ -112,5 +112,10 @@ fn report_histogram(counts: &[u64], w: &mut impl Write) {
 
 
 fn main() {
-    example_sampling();
+    let args: Vec<String> = std::env::args().collect();
+    match args.get(1).map(String::as_str) {
+        Some("generate") => example_generation(),
+        Some("sample") => example_sampling(),
+        _ => example_sampling(),
+    }
 }
